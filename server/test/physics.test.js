@@ -102,6 +102,9 @@ end)`;
   assert.ok(own2);
   b.send2({ t: 'phys', u: [[boxId, 7, 1, 0, 0, 45, 0, 0, 0, 0]] });
   await a.next((m) => m.t === 'phys' && m.u.some((u) => u[0] === boxId && u[1] === 7));
+  // A map far from the lobby: the others see you where you are, not stopped at an edge.
+  a.send2({ t: 'state', p: [0, 0.6, 600], r: 0, a: 'walk' });
+  await b.next((m) => m.t === 's' && m.s.some((s) => s[0] === wa.you && s[3] === 600));
   // The server's world has the box where it went: a rejoin gets it there.
   await new Promise((res) => setTimeout(res, 400));
   a.send2({ t: 'join', game: placeId, server: wa.server.id });

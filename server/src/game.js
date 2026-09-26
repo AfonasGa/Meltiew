@@ -6,6 +6,7 @@ import { MoveGuard, PLAYGROUND_LIMITS } from './anticheat.js';
 import { chatRules, FACES } from './age.js';
 import { filterText } from './filter.js';
 import { PlaceVM } from './studio/vm.js';
+import { createOutbox, splitOps, splitSnapshot, CHUNK_BYTES } from './outbox.js';
 
 export const MAX_PLAYERS = 10;
 // Studio places can take more (the owner sets it; new places start at 10).
@@ -31,7 +32,9 @@ const EMPTY_SERVER_TTL_MS = 30_000;
 // After the creator saves a new version, live servers wait this long (more saves
 // restart the wait) and then move everyone to a fresh server running it.
 const MIGRATE_DELAY_MS = 4000;
-const WORLD_LIMIT = 400;
+// How far from the origin a player may be. Places put maps far from the lobby
+// (Meltopia's are 500-700 studs out), so the same room as physics parts.
+const WORLD_LIMIT = 5000;
 // Physics parts (unanchored): one app simulates each, the rest follow its reports.
 const PHYS_MAX_BATCH = 64;
 const PHYS_CLAIM_RANGE = 12; // how close you must be to take a part over
@@ -142,7 +145,7 @@ export class GameHub {
   stop() {
     clearInterval(this.timer);
     for (const s of this.servers.values()) {
-      for (const p of s.players.values()) p.conn.ws.close(1001, 'server shutdown');
+      for (const p of s.players.values()) p.conn.out.close(1001, 'server shutdown');
       s.vm?.close();
     }
   }
@@ -303,7 +306,7 @@ export class GameHub {
     for (const [id, p] of server.players) {
       const own = server.targeted.get(id);
       const o = own ? shared.concat(own) : shared;
-      if (o.length) p.conn.send({ t: 'r', o });
+      if (o.length) p.conn.sendOps(o);
     }
     server.shared = [];
     server.targeted = new Map();
@@ -551,9 +554,13 @@ export class GameHub {
       blocks: this.loadBlocks(user.id),
       rules: chatRules(user.birthdate),
       luau: caps.luau === true, // the app can run place scripts (64-bit builds)
+      out: createOutbox(ws, caps.buffer),
     };
-    conn.send = (m) => {
-      if (ws.readyState === 1) ws.send(JSON.stringify(m));
+    conn.send = (m) => conn.out.send(JSON.stringify(m));
+    conn.sendRaw = (data) => conn.out.send(data);
+    // Replication, cut to fit the app's receive buffer.
+    conn.sendOps = (ops) => {
+      for (const o of splitOps(ops)) conn.send({ t: 'r', o });
     };
 
     ws.on('message', (raw) => {
@@ -675,7 +682,7 @@ export class GameHub {
     const existing = this.byUser.get(conn.user.id);
     if (existing && existing.conn !== conn) {
       existing.conn.send({ t: 'kicked', code: 'duplicate', m: msg('duplicate', existing.conn.lang) });
-      existing.conn.ws.close(4000, 'duplicate');
+      existing.conn.out.close(4000, 'duplicate');
       this.leave(existing.conn);
     }
 
@@ -695,7 +702,9 @@ export class GameHub {
     const passInfo = studio ? this.economy?.passesInfo(game) || [] : [];
     const badges = studio ? this.badges?.ownedIn(conn.user.id, game) || [] : [];
     const badgeInfo = studio ? this.badges?.info(game) || [] : [];
-    const place = studio ? { id: game, strings: server.strings, snapshot: server.vm.snapshot(), passes, pass_info: passInfo, badges, badge_info: badgeInfo } : null;
+    // A big world doesn't fit the welcome: what's in Workspace follows it as replication.
+    const snap = studio ? splitSnapshot(server.vm.snapshot(), Math.min(conn.out.buffer / 2, 8 * 1024 * 1024) - CHUNK_BYTES) : null;
+    const place = studio ? { id: game, strings: server.strings, snapshot: snap.head, passes, pass_info: passInfo, badges, badge_info: badgeInfo } : null;
     conn.send({
       t: 'welcome',
       server: this.describe(server),
@@ -708,6 +717,7 @@ export class GameHub {
         .filter((p) => p !== player)
         .map((p) => ({ ...p.user, p: p.p, r: p.r, a: p.a })),
     });
+    if (snap?.rest.length) conn.sendOps(snap.rest);
     this.broadcast(server, { t: 'join', player: { ...player.user, p: player.p, r: player.r, a: player.a } }, conn.user.id);
     this.broadcast(server, { t: 'sys', k: 'joined', n: player.user.display_name }, conn.user.id);
     if (studio && server.phys.size) {
@@ -800,7 +810,7 @@ export class GameHub {
       if (p.conn.blocks.has(conn.user.id) || !p.conn.rules.chat) continue;
       // The sender always sees what they typed; minors get the filtered version.
       const data = p.conn !== conn && p.conn.rules.filter_chat ? clean : raw;
-      if (p.conn.ws.readyState === 1) p.conn.ws.send(data);
+      p.conn.sendRaw(data);
     }
   }
 
@@ -928,7 +938,7 @@ export class GameHub {
     const entry = this.byUser.get(userId);
     if (!entry) return false;
     entry.conn.send({ t: 'kicked', code, m: message });
-    entry.conn.ws.close(4001, code);
+    entry.conn.out.close(4001, code);
     this.leave(entry.conn);
     return true;
   }
@@ -938,7 +948,7 @@ export class GameHub {
     if (!server) return false;
     for (const p of [...server.players.values()]) {
       p.conn.send({ t: 'kicked', code: 'closed', m: '' });
-      p.conn.ws.close(4002, 'closed');
+      p.conn.out.close(4002, 'closed');
       this.leave(p.conn);
     }
     this.servers.delete(server.id);
@@ -955,7 +965,7 @@ export class GameHub {
     const data = JSON.stringify(m);
     for (const [id, p] of server.players) {
       if (id === exceptId) continue;
-      if (p.conn.ws.readyState === 1) p.conn.ws.send(data);
+      p.conn.sendRaw(data);
     }
   }
 

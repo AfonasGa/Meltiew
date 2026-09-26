@@ -10,6 +10,7 @@ import { pickLang, msg } from './i18n.js';
 import { LANGUAGE_CODES } from './languages.js';
 import { PlaceStore } from './studio/places.js';
 import { GameHub } from './game.js';
+import { OLD_APP_BUFFER } from './outbox.js';
 import { createDataStore } from './studio/datastore.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -109,8 +110,8 @@ export function startServer({ port = PORT, host = HOST, dbFile = DB_FILE, render
     }
   });
 
-  // Room for studio remote-event arguments.
-  const wss = new WebSocketServer({ noServer: true, maxPayload: 64 * 1024 });
+  // Room for big studio remote-event arguments (a video's frames, a drawing...).
+  const wss = new WebSocketServer({ noServer: true, maxPayload: 8 * 1024 * 1024 });
   server.on('upgrade', (req, socket, head) => {
     const url = new URL(req.url, 'http://local');
     if (url.pathname !== '/ws') {
@@ -135,7 +136,9 @@ export function startServer({ port = PORT, host = HOST, dbFile = DB_FILE, render
       ws.isAlive = true;
       ws.on('pong', () => (ws.isAlive = true));
       log(`ws open ${auth.user.username} from ${clientIp(req)}`);
-      hub.attach(ws, auth.user, lang, { luau: url.searchParams.get('luau') === '1' });
+      // Apps from 1.6.2 say how big their receive buffer is; older ones have 256 KB.
+      const buffer = Math.min(64 * 1024 * 1024, parseInt(url.searchParams.get('buf'), 10) || OLD_APP_BUFFER);
+      hub.attach(ws, auth.user, lang, { luau: url.searchParams.get('luau') === '1', buffer });
     });
   });
 

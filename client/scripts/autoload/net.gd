@@ -5,6 +5,10 @@ signal connected
 signal disconnected(reason: String)
 signal message(msg: Dictionary)
 
+## Receive buffer. Godot drops a message that doesn't fit it without a word, so it's
+## big: a place's whole map can come in one go. The server is told its size.
+const BUFFER := 1 << 24
+
 var _ws: WebSocketPeer
 var _was_open := false
 var _closing := false
@@ -13,8 +17,8 @@ var _closing := false
 func connect_to_game() -> void:
 	close()
 	_ws = WebSocketPeer.new()
-	_ws.inbound_buffer_size = 1 << 18
-	_ws.outbound_buffer_size = 1 << 16
+	_ws.inbound_buffer_size = BUFFER
+	_ws.outbound_buffer_size = 1 << 23
 	_was_open = false
 	_closing = false
 	var err := _ws.connect_to_url(Api.ws_url())
