@@ -123,6 +123,9 @@ export class GameHub {
    * @param {object} [opts.places] studio places: { load(id) -> melt, row(id), canJoin(user, id), visit(id, userId), playtime(id, userId, ms) }
    */
   constructor({ log = () => {}, loadBlocks = () => new Set(), loadFriends = () => new Set(), onJoin = () => {}, places = null, onCheat = () => {} } = {}) {
+    // Movement checks are off unless MELTIEW_ANTICHEAT=1: they kept snapping honest
+    // players back after a place teleported them.
+    this.anticheat = process.env.MELTIEW_ANTICHEAT === '1';
     this.servers = new Map(); // id -> server
     this.byUser = new Map(); // userId -> { server, player, conn }
     this.log = log;
@@ -727,7 +730,7 @@ export class GameHub {
     if (!pl || !Array.isArray(m.p)) return;
     const pos = [finite(m.p[0], WORLD_LIMIT), finite(m.p[1], WORLD_LIMIT), finite(m.p[2], WORLD_LIMIT)];
     // The platform owner flies and speeds around with the in-game admin panel.
-    if (isOwner(conn.user)) pl.guard.reset(pos);
+    if (!this.anticheat || isOwner(conn.user)) pl.guard.reset(pos);
     else {
       const bad = pl.guard.check(pos, this.limitsFor(conn.server, conn.user.id));
       if (bad) return this.caught(conn, pl, bad);

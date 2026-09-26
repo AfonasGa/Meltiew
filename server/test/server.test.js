@@ -4,6 +4,9 @@ import WebSocket from 'ws';
 import { startServer } from '../src/index.js';
 import { LATEST_CLIENT } from '../src/version.js';
 
+// These tests check the movement anticheat, which is off unless asked for.
+process.env.MELTIEW_ANTICHEAT = '1';
+
 // The tests act as the current app; NEXT is a version that doesn't exist yet.
 const CLIENT = LATEST_CLIENT;
 const NEXT = LATEST_CLIENT.replace(/\.(\d+)\.\d+$/, (_, minor) => `.${Number(minor) + 1}.0`);

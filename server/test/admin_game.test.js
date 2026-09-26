@@ -5,6 +5,9 @@ import { startServer } from '../src/index.js';
 import { LATEST_CLIENT } from '../src/version.js';
 import { templatePlace } from '../src/studio/places.js';
 
+// These tests check the movement anticheat, which is off unless asked for.
+process.env.MELTIEW_ANTICHEAT = '1';
+
 const PORT = 17398;
 const base = `http://127.0.0.1:${PORT}`;
 let app;
