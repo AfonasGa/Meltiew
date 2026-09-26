@@ -17,7 +17,7 @@ Shared.KILLER_STATS = { WalkSpeed = 5.4, SprintSpeed = 8.4, MaxStamina = 220, St
 
 -- The killer's moves.
 Shared.PUNCH = { damage = 34, range = 7, cooldown = 1.1 }
-Shared.SPIKE = { damage = 26, speed = 72, range = 95, cooldown = 6 }
+Shared.SPIKE = { damage = 26, speed = 55, range = 95, cooldown = 6 }
 
 -- Coins.
 Shared.REWARD = { survive = 30, escapeDead = 8, genStep = 3, killerWin = 40, perKill = 10 }

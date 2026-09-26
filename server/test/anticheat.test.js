@@ -102,3 +102,25 @@ test('a cheater who keeps going gets kicked, lag spikes do not', () => {
   const after = [r.p[0] + 14, 0.6, 0]; // two seconds of sprinting, delivered late
   assert.equal(h.check(after, L, r.t + 2000), null);
 });
+
+test('a server teleport ignores stale updates from the old spot, then checks from the new one', () => {
+  const limits = { walk: 0, sprint: 0, jump: 0, gravity: 22, check: true };
+  const g = new MoveGuard([0, 2, 0], 0);
+  g.teleportTo([0, 3.5, 520], 1000);
+  // An update sent before the client heard about the teleport.
+  assert.equal(g.check([0.5, 2, 0.2], limits, 1050)?.silent, true);
+  // The client arrives (frozen: walk speed 0), falls onto the ground, stands still.
+  assert.equal(g.check([0, 3.4, 520], limits, 1150), null);
+  assert.equal(g.check([0, 0.1, 520], limits, 1600), null);
+  assert.equal(g.check([0, 0.1, 520], limits, 3200), null);
+  assert.equal(g.points, 0);
+});
+
+test('a server teleport the client never follows puts them there without points', () => {
+  const limits = { walk: 5, sprint: 7, jump: 8, gravity: 22, check: true };
+  const g = new MoveGuard([0, 2, 0], 0);
+  g.teleportTo([0, 3.5, 520], 1000);
+  const r = g.check([1, 2, 0], limits, 5200);
+  assert.deepEqual(r.back, [0, 3.5, 520]);
+  assert.equal(g.points, 0);
+});

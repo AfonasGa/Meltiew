@@ -749,8 +749,8 @@ def main():
     ]}
     remotes = {'c': 'Folder', 'n': 'Remotes', 'k': [{'c': 'RemoteEvent', 'n': n} for n in
                                                      ['Action', 'GenStart', 'GenSolve', 'GenFail', 'Notify', 'Sfx', 'Result', 'Hit']]}
-    spike = part('Spike', (0.35, 0.35, 2.6), (0, -500, 0), '#ff3b4f', 'Neon', collide=False, shadow=False, touch=False,
-                 kids=[light('#ff3b4f', 1.8, 10)])
+    spike = part('Spike', (0.5, 0.5, 3.2), (0, -500, 0), '#ff3b4f', 'Neon', collide=False, shadow=False, touch=False,
+                 kids=[light('#ff3b4f', 2.6, 14)])
 
     tree = {'c': 'DataModel', 'k': [
         {'c': 'Workspace', 'n': 'Workspace', 'p': {'Gravity': 22, 'FallHeight': -40}, 'k': [lob]},

@@ -1,0 +1,15 @@
+{
+  "MusicLobby": "asset://b2d1d105d10e9144",
+  "MusicCalm": "asset://ea86efe6c048dc8f",
+  "MusicChase": "asset://c8ee0a083c2b8bf4",
+  "SfxGenDone": "asset://97cbe1fafc365b95",
+  "SfxGenFail": "asset://112205c8ca43162b",
+  "SfxPunch": "asset://eb02f140743aad69",
+  "SfxSpikeThrow": "asset://c83047b41d2baae8",
+  "SfxSpikeHit": "asset://8396af2448375b07",
+  "SfxRoundStart": "asset://e3475f448a7ceb9b",
+  "SfxSurvivorsWin": "asset://8253930d3819334b",
+  "SfxKillerWin": "asset://d17abcc172a6bfa7",
+  "RenderKiller": "asset://ebfeb74d70b24840",
+  "RenderSurvivor": "asset://ca1c8c01dfc902ad"
+}

@@ -486,7 +486,8 @@ end)
 local function nearGen(player, gen)
 	local root = rootOf(player)
 	local base = gen and gen.Parent and genBase(gen)
-	return root and base and (root.Position - base.Position).Magnitude <= Shared.REPAIR_RANGE + 2
+	-- A little more room than the button needs: where the server last heard you were lags behind.
+	return root and base and (root.Position - base.Position).Magnitude <= Shared.REPAIR_RANGE + 5
 end
 
 local function canRepair(player, gen)
@@ -503,7 +504,8 @@ end)
 
 Remotes.GenSolve.OnServerEvent:Connect(function(player, gen)
 	local p = round and round.puzzles[player]
-	if not p or p.gen ~= gen or time() - p.at < 2 or not canRepair(player, gen) then
+	-- The app waits about 2 s before sending; a solve faster than 1 s wasn't done by hand.
+	if not p or p.gen ~= gen or time() - p.at < 1 or not canRepair(player, gen) then
 		return
 	end
 	round.puzzles[player] = nil
@@ -597,15 +599,16 @@ local function throwSpike(killer, aim)
 	if not root then
 		return
 	end
-	local dir = aim.Unit
-	-- Mostly level, a little up or down with the camera.
-	dir = Vector3.new(dir.X, math.clamp(dir.Y, -0.25, 0.25), dir.Z).Unit
-	local pos = root.Position + Vector3.new(0, 2.7, 0) + flatDir(dir) * 1.4
+	-- Straight and level at chest height: the camera looks down at your character,
+	-- and following its tilt sent spikes into the ground.
+	local dir = flatDir(aim)
+	if not dir then
+		return
+	end
+	local pos = root.Position + Vector3.new(0, 1.7, 0) + dir * 1.4
 	local spike = spikeTemplate:Clone()
 	spike.Name = "Spike"
-	local yaw = math.deg(math.atan2(dir.X, dir.Z))
-	local pitch = -math.deg(math.asin(dir.Y))
-	spike.Rotation = Vector3.new(pitch, yaw, 0)
+	spike.Rotation = Vector3.new(0, math.deg(math.atan2(dir.X, dir.Z)), 0)
 	spike.Position = pos
 	spike.Parent = workspace
 	playAt(spike, "SfxSpikeThrow", 1.2)

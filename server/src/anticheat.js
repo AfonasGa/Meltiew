@@ -15,6 +15,8 @@ const TELEPORT_SLACK = 12; // a single jump this far beyond the limit is a telep
 const DECAY_MS = 4000; // one violation point fades every this many ms
 export const KICK_POINTS = 14;
 const POINTS = { speed: 1, rise: 2, ceiling: 3, teleport: 3 };
+const EXPECT_MS = 4000; // how long a server teleport waits for the client to arrive
+const EXPECT_RADIUS = 14; // "arrived": this close to where the server put them
 
 export class MoveGuard {
   constructor(pos, now = Date.now()) {
@@ -28,10 +30,21 @@ export class MoveGuard {
   /** A legit jump in position (spawn, respawn, server teleport): start over from here. */
   reset(pos, now = Date.now()) {
     this.correcting = null;
+    this.arriving = null;
     this.good = pos.slice();
     this.samples = [{ t: now, p: pos.slice() }];
     this.graceUntil = now + 1500; // the client needs a moment to actually move there
   }
+  /**
+   * The server moved the player (a place's Teleport, an admin's bring). Updates
+   * already on their way from the old spot are ignored until the client reports
+   * being at the new one; if it never does, it's put there.
+   */
+  teleportTo(pos, now = Date.now()) {
+    this.reset(pos, now);
+    this.arriving = { p: pos.slice(), until: now + EXPECT_MS };
+  }
+
 
   /** Lets the next update land anywhere near `pos` (a respawn the client does itself). */
   expect(pos, radius, now = Date.now()) {
@@ -44,6 +57,19 @@ export class MoveGuard {
    */
   check(pos, limits, now = Date.now()) {
     this._decay(now);
+    if (this.arriving) {
+      if (dist3(pos, this.arriving.p) <= EXPECT_RADIUS) {
+        this.arriving = null;
+        this.reset(pos, now);
+        return null;
+      }
+      if (now < this.arriving.until) return { reason: 'wait', back: this.arriving.p.slice(), silent: true };
+      // Never got there: put them where the server sent them (no points, it's not their doing).
+      const back = this.arriving.p.slice();
+      this.reset(back, now);
+      this.correcting = { until: now + 2000 };
+      return { reason: 'teleport', back, noPoints: true };
+    }
     if (!limits.check) return this._accept(pos, now);
     // An announced respawn: accept the jump if it lands near the spawn.
     if (this.pending && now < this.pending.until && dist3(pos, this.pending.p) <= this.pending.r) {

@@ -223,7 +223,7 @@ export class GameHub {
           // The place moved this player (spawn, respawn, Teleport): that jump is legit.
           const who = server.players.get(Number(op.to));
           const v = op.pos?.$v3;
-          if (who && Array.isArray(v)) who.guard.reset(v.map(Number));
+          if (who && Array.isArray(v)) who.guard.teleportTo(v.map(Number));
           this.target(server, op.to, { o: 'spawn', pos: op.pos });
           break;
         }
@@ -321,7 +321,7 @@ export class GameHub {
       }
       if (events.length) this.routeOps(server, server.vm.dispatch(events));
       this.routeOps(server, server.vm.step(dt));
-      if (!server.limitsAt || now - server.limitsAt > 1000) {
+      if (!server.limitsAt || now - server.limitsAt > 250) {
         server.limitsAt = now;
         server.limits = server.vm.limits();
       }
@@ -744,13 +744,27 @@ export class GameHub {
   limitsFor(server, userId) {
     if (!server?.vm) return PLAYGROUND_LIMITS;
     const l = server.limits?.[String(userId)];
-    return l ? { ...l, check: l.check !== false } : { walk: 5, sprint: 7, jump: 8.2, gravity: 22, check: true };
+    const cur = l ? { ...l, check: l.check !== false } : { walk: 5, sprint: 7, jump: 8.2, gravity: 22, check: true };
+    // A place slowing someone down (freezing them, say) still lets through what they
+    // were doing a moment ago: their app hasn't heard about it yet.
+    server.recentLimits ??= new Map();
+    const t = Date.now();
+    const hist = (server.recentLimits.get(userId) || []).filter((h) => t - h.t <= 1500);
+    hist.push({ t, walk: cur.walk, sprint: cur.sprint, jump: cur.jump });
+    server.recentLimits.set(userId, hist);
+    for (const h of hist) {
+      cur.walk = Math.max(cur.walk, h.walk);
+      cur.sprint = Math.max(cur.sprint, h.sprint);
+      cur.jump = Math.max(cur.jump, h.jump);
+    }
+    return cur;
   }
 
   /** A movement check failed: put the player back, and kick repeat offenders. */
   caught(conn, pl, bad) {
     if (bad.silent) return;
     conn.send({ t: 'correct', p: bad.back });
+    if (bad.noPoints) return;
     this.log(`anticheat: ${conn.user.username} ${bad.reason} (points ${pl.guard.points}) on ${conn.server?.id}`);
     if (pl.guard.shouldKick) {
       this.log(`anticheat: kicked ${conn.user.username} for ${bad.reason}`);
@@ -818,7 +832,7 @@ export class GameHub {
         if (!target || target.conn === conn) return;
         const p = conn.player.p;
         const pos = [p[0] + 1.5, p[1] + 0.5, p[2]];
-        target.guard.reset(pos);
+        target.guard.teleportTo(pos);
         target.conn.send({ t: 'correct', p: pos });
         return done('bring', target.user.display_name);
       }
@@ -842,6 +856,7 @@ export class GameHub {
     const player = server.players.get(conn.user.id);
     if (player && player.conn === conn) {
       server.players.delete(conn.user.id);
+      server.recentLimits?.delete(conn.user.id);
       const entry = this.byUser.get(conn.user.id);
       if (entry && entry.conn === conn) this.byUser.delete(conn.user.id);
       this.broadcast(server, { t: 'leave', id: conn.user.id });
