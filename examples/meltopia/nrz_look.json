@@ -1,0 +1,16 @@
+{
+  "colors": {
+    "torso": "#5fe08e",
+    "head": "#c7f464",
+    "arm_l": "#c7f464",
+    "arm_r": "#c7f464",
+    "leg_l": "#c7f464",
+    "leg_r": "#c7f464"
+  },
+  "face": ":3",
+  "accessories": [
+    "cattail",
+    "sunglasses",
+    "tophat"
+  ]
+}

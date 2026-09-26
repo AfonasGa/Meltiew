@@ -227,7 +227,7 @@ Tools put here are copied into every player's Backpack each time their character
 |---|---|---|---|
 | MaxPlayers | number | 10 | read-only, min 1, max 30 |
 
-**Methods:** `GetAppearanceAsync(userId)`, `GetPlayers()`, `GetPlayerByUserId(id)`, `GetPlayerFromCharacter(model)`
+**Methods:** `GetAppearanceAsync(userId)`, `GetUserAppearanceAsync(username)`, `GetPlayers()`, `GetPlayerByUserId(id)`, `GetPlayerFromCharacter(model)`
 
 **Events:** `PlayerAdded`, `PlayerRemoving`
 
@@ -297,6 +297,8 @@ A shape scripts build out of triangles: terrain, hills, rocks, a whole Minecraft
 ### Text3D
 
 *can be created with `Instance.new`*
+
+Floating 3D text. Put it inside a character (a player's Model or a Rig) and it's worn on the head: **Position** becomes an offset from the middle of the head and it follows every move. With **Billboard** on it always faces the camera, so a big `■` in black makes a mysterious "censored" face.
 
 | Property | Type | Default | Notes |
 |---|---|---|---|

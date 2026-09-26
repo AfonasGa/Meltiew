@@ -933,7 +933,8 @@
       0
      ]
     }
-   }
+   },
+   "doc": "Floating 3D text. Put it inside a character (a player's Model or a Rig) and it's worn on the head: **Position** becomes an offset from the middle of the head and it follows every move. With **Billboard** on it always faces the camera, so a big `■` in black makes a mysterious \"censored\" face."
   },
   "PointLight": {
    "base": "Instance",

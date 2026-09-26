@@ -135,6 +135,13 @@ func set_colors(colors: Dictionary) -> void:
 		_body_mat.set_shader_parameter("part_colors", arr)
 
 
+## Middle of the head in world space; follows animations and emotes.
+func head_center() -> Vector3:
+	if _hat_root == null:
+		return global_position + Vector3.UP * (HEAD_TOP - 0.35) * scale.y
+	return _hat_root.global_position + _hat_root.global_basis.y.normalized() * _head_top_above_bone * 0.5 * global_basis.get_scale().y
+
+
 ## World height of the highest point of the character right now: the top of the head
 ## (it follows emotes like sitting) or whatever is worn higher up.
 func top_y() -> float:

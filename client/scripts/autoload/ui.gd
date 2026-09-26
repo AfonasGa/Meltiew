@@ -351,7 +351,9 @@ func _build_fonts() -> void:
 	# Nunito covers Latin and Cyrillic; CJK, Arabic, Indic, Thai... come from the system fonts.
 	var system := SystemFont.new()
 	system.font_names = PackedStringArray(["sans-serif", "Noto Sans", "Noto Sans CJK SC", "Noto Sans Arabic", "Noto Sans Devanagari", "Roboto"])
-	base.fallbacks = [system]
+	# Arrows, blocks and shapes (→ █ ■ ★) look the same on every device.
+	var symbols: FontFile = load("res://assets/fonts/Symbols.ttf")
+	base.fallbacks = [symbols, system]
 	var wght := TextServerManager.get_primary_interface().name_to_tag("wght")
 	font_regular = FontVariation.new()
 	font_regular.base_font = base

@@ -40,6 +40,7 @@ var lang := "en"
 
 var _parts := {}  # id -> {body, mesh, shape}
 var _texts := {}  # id -> Label3D
+var _worn_texts := {}  # Text3D id -> the character Model or Rig whose head it sits on
 var _lights := {}  # id -> OmniLight3D
 var _targets := {}  # id -> Transform3D (smoothed replicated movement)
 var _held := {}  # part id -> tool id, for parts of a Tool someone is holding
@@ -236,6 +237,7 @@ func _destroy(id: String) -> void:
 	if _texts.has(id):
 		_texts[id].queue_free()
 		_texts.erase(id)
+		_worn_texts.erase(id)
 	if _rigs.has(id):
 		_rigs[id].body.queue_free()
 		_rigs.erase(id)
@@ -355,6 +357,8 @@ func _teleport(body: Node3D, t: Transform3D) -> void:
 func _process(_delta: float) -> void:
 	if not _held.is_empty() or not _holding.is_empty():
 		_follow_hands()
+	if not _worn_texts.is_empty():
+		_follow_heads()
 	if not _pmesh_dirty.is_empty():
 		for id in _pmesh_dirty:
 			if _pmeshes.has(id):
@@ -833,7 +837,12 @@ func _build_text(id: String) -> void:
 
 func _style_text(id: String) -> void:
 	var l: Label3D = _texts[id]
-	l.global_transform = _transform_of(id)
+	var owner_id := "" if editing else _head_owner(id)
+	if owner_id != "":
+		_worn_texts[id] = owner_id
+	else:
+		_worn_texts.erase(id)
+		l.global_transform = _transform_of(id)
 	l.text = localize(str(tree.prop(id, "Text")))
 	l.modulate = tree.prop(id, "TextColor")
 	l.outline_modulate = tree.prop(id, "OutlineColor")
@@ -842,8 +851,49 @@ func _style_text(id: String) -> void:
 	l.pixel_size = 0.01
 	l.font = {"Regular": UI.font_regular, "Bold": UI.font_bold}.get(str(tree.prop(id, "Font")), UI.font_black)
 	l.billboard = BaseMaterial3D.BILLBOARD_ENABLED if tree.prop(id, "Billboard") else BaseMaterial3D.BILLBOARD_DISABLED
-	l.visible = tree.prop(id, "Visible")
+	l.visible = tree.prop(id, "Visible") and owner_id == ""
 	l.double_sided = true
+
+
+## A Text3D inside a character (a player's Model or a Rig) is worn on its head:
+## its Position becomes an offset from the middle of the head.
+func _head_owner(id: String) -> String:
+	var cur := tree.parent_of(id)
+	while cur != "" and cur != PlaceTree.ROOT:
+		if tree.cls(cur) == "Rig" or _is_character(cur):
+			return cur
+		cur = tree.parent_of(cur)
+	return ""
+
+
+func _follow_heads() -> void:
+	var cam := get_viewport().get_camera_3d()
+	for id in _worn_texts:
+		var l: Label3D = _texts[id]
+		var owner_id: String = _worn_texts[id]
+		var av: MellyAvatar = null
+		if _rigs.has(owner_id):
+			av = _rigs[owner_id].avatar
+		elif avatar_of.is_valid():
+			av = avatar_of.call(owner_id)
+		if av == null or not av.is_visible_in_tree() or not tree.prop(id, "Visible"):
+			l.visible = false
+			continue
+		var offset: Variant = tree.prop(id, "Position")
+		var at: Vector3 = av.head_center() + (offset if offset is Vector3 else Vector3.ZERO)
+		if cam:
+			var to_cam := cam.global_position - at
+			# Never in the viewer's own face (first person, or the camera right against it).
+			if to_cam.length() < 1.6:
+				l.visible = false
+				continue
+			# Facing texts sit just in front of the head, so the head doesn't poke through.
+			if l.billboard != BaseMaterial3D.BILLBOARD_DISABLED:
+				at += to_cam.normalized() * 0.55
+		l.visible = true
+		var rot: Variant = tree.prop(id, "Rotation")
+		var r: Vector3 = rot if rot is Vector3 else Vector3.ZERO
+		l.global_transform = Transform3D(Basis.from_euler(r * (PI / 180.0)), at)
 
 
 func _build_light(id: String) -> void:
