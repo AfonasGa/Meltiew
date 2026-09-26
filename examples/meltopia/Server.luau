@@ -127,6 +127,12 @@ Players.PlayerAdded:Connect(function(player)
 		local role = roleOf(player)
 		if role == "killer" then
 			applyStats(player, Shared.KILLER_STATS)
+			if round and round.killer == player and not round.over then
+				if player.Character and not player.Character:FindFirstChild("Censor") then
+					SS.Censor:Clone().Parent = player.Character
+				end
+				player:Teleport(round.map.Spawns.Killer.Position + Vector3.new(0, 3, 0))
+			end
 		elseif role == "survivor" then
 			applyStats(player, Shared.SURVIVOR_STATS)
 		else
@@ -248,7 +254,8 @@ local function hookHumanoid(player)
 	end
 	hum.Died:Connect(function()
 		if round and round.alive[player] and player ~= round.killer then
-			onSurvivorDown(player, true)
+			local hit = round.hitAt[player]
+			onSurvivorDown(player, hit ~= nil and time() - hit < 10)
 		end
 	end)
 end
@@ -283,7 +290,7 @@ local function runRound(players)
 	local killer = pickKiller(players)
 	lastKiller = killer
 	round = { map = map, killer = killer, alive = {}, kills = 0, gens = {}, puzzles = {}, steps = {}, over = false,
-		cooldowns = { punch = 0, spike = 0 }, released = false, timeLeft = Shared.ROUND_TIME }
+		cooldowns = { punch = 0, spike = 0 }, released = false, timeLeft = Shared.ROUND_TIME, hitAt = {} }
 
 	local gens = map.Generators:GetChildren()
 	for _, gen in gens do
@@ -552,6 +559,7 @@ local function hurt(victim, amount, sound)
 	if not hum or hum.Health <= 0 then
 		return
 	end
+	round.hitAt[victim] = time()
 	hum:TakeDamage(amount)
 	playAt(rootOf(victim), sound, 1.3)
 	Remotes.Hit:FireClient(victim, amount)
