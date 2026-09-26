@@ -79,6 +79,11 @@ if [ -f "$conf" ] && grep -q "ssl_certificate" "$conf"; then
 else
   cp "$tmp/meltiew/deploy/nginx-meltiew.conf" "$conf"
 fi
+# Studio uploads (sounds up to 5 MB as base64) need more than nginx's 1 MB default,
+# also in a config that already has SSL and isn't replaced above.
+if ! grep -q "client_max_body_size" "$conf"; then
+  sed -i "/server_name[^;]*$DOMAIN;/a\    client_max_body_size 16m;" "$conf"
+fi
 ln -sf "$conf" /etc/nginx/sites-enabled/$DOMAIN
 if ! nginx -t 2>/tmp/meltiew-nginx.log; then
   cat /tmp/meltiew-nginx.log
