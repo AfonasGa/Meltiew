@@ -20,6 +20,8 @@ var menu: GameMenu
 var prompts: PlacePrompts
 var remotes := {}  # user id -> RemotePlayer
 var voice: Voice
+var _watching := 0  # whose character the place's camera follows (spectating)
+var _watching_at := -100000
 var users := {}  # user id -> public user dict (everyone incl. me)
 var my_id := -1
 var admin: AdminPanel
@@ -291,7 +293,7 @@ func _on_message(m: Dictionary) -> void:
 					hud.add_chat("Meltiew", str(m.get("m", "")), Color("#ffd166"))
 					hud.big_message(str(m.get("m", "")), 3.5)
 		"voice":
-			voice.heard(int(m.get("id", 0)), str(m.get("d", "")))
+			voice.heard(int(m.get("id", 0)), str(m.get("d", "")), m.get("p"))
 		"hug":
 			# Someone took our open arms, or we took theirs: face to face, one hug.
 			if m.has("pos"):
@@ -779,6 +781,9 @@ func _camera_subject(cam_id: String) -> Array:
 	# stay where they spawned (positions come on their own, not as replication), so
 	# following those left spectator cameras staring at the lobby.
 	var uid := h.user_of_character(id)
+	if uid != 0:
+		_watching = uid
+		_watching_at = Time.get_ticks_msec()
 	if uid != 0 and remotes.has(uid):
 		var rp: RemotePlayer = remotes[uid]
 		return [rp.get_global_transform_interpolated().origin + Vector3(0, 1.5, 0), rp.avatar.rotation.y]
@@ -884,6 +889,8 @@ func _remove_remote(id: int) -> void:
 	if remotes.has(id):
 		remotes[id].queue_free()
 		remotes.erase(id)
+	if voice:
+		voice.forget(id)
 
 
 func _is_owner() -> bool:
@@ -927,6 +934,9 @@ func _physics_process(delta: float) -> void:
 			"r": snappedf(player.avatar.rotation.y, 0.01),
 			"a": player.current_anim(),
 		}
+		# Spectating someone: the server's anti-wallhack then also looks from their camera.
+		if Time.get_ticks_msec() - _watching_at < 500:
+			state["w"] = _watching
 		# Resend at least once a second so late joiners and interpolation stay fresh.
 		var now := Time.get_ticks_msec()
 		if state != _last_sent or now - _last_sent_at > 1000:

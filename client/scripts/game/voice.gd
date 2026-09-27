@@ -23,7 +23,9 @@ var _pending := PackedFloat32Array()
 var _phase := 0.0
 var _quiet := 999.0
 var _speaking := false
-var _players := {}  # user id -> {player: AudioStreamPlayer3D, gen: AudioStreamGeneratorPlayback}
+var _players := {}  # user id -> {player: AudioStreamPlayer3D, gen: AudioStreamGeneratorPlayback, at: Vector3}
+var _talking := {}  # user id -> ms until their waves go away
+static var _wave: Texture2D
 
 
 func set_mic(on: bool) -> void:
@@ -63,6 +65,24 @@ func _start_capture() -> void:
 func _process(delta: float) -> void:
 	if mic_on and _capture:
 		_read_mic(delta)
+	# Each voice comes from its speaker's Melly, or (someone the server doesn't show you,
+	# behind a wall) from where the server says they are.
+	for uid in _players:
+		var e: Dictionary = _players[uid]
+		if not is_instance_valid(e.player):
+			continue
+		var rp: Node3D = remotes.get(uid)
+		var at: Vector3 = e.at
+		if rp and is_instance_valid(rp) and rp.global_position.y > -1000.0:
+			at = rp.global_position
+		e.player.global_position = at + Vector3(0, 1.6, 0)
+	var now := Time.get_ticks_msec()
+	for uid in _talking.keys():
+		if now > int(_talking[uid]):
+			_talking.erase(uid)
+			var rp: Node = remotes.get(uid)
+			if rp and is_instance_valid(rp):
+				rp.set_talking(false)
 
 
 func _read_mic(delta: float) -> void:
@@ -103,11 +123,13 @@ func _set_speaking(on: bool) -> void:
 		speaking_changed.emit(on)
 
 
-## A piece of someone's voice from the server.
-func heard(user_id: int, data: String) -> void:
+## A piece of someone's voice from the server (`at`: where they are).
+func heard(user_id: int, data: String, at: Variant = null) -> void:
 	var rp: Node3D = remotes.get(user_id)
 	if rp == null or not Session.settings.get("voice_hear", true):
 		return
+	rp.set_talking(true)
+	_talking[user_id] = Time.get_ticks_msec() + 350
 	var e: Dictionary = _players.get(user_id, {})
 	if e.is_empty() or not is_instance_valid(e.player):
 		var p := AudioStreamPlayer3D.new()
@@ -117,17 +139,54 @@ func heard(user_id: int, data: String) -> void:
 		p.stream = gen
 		p.unit_size = 8.0
 		p.max_distance = 50.0
-		p.position = Vector3(0, 1.6, 0)
-		rp.add_child(p)
+		add_child(p)
+		p.global_position = rp.global_position + Vector3(0, 1.6, 0)
 		p.play()
-		e = {"player": p, "gen": p.get_stream_playback()}
+		e = {"player": p, "gen": p.get_stream_playback(), "at": rp.global_position}
 		_players[user_id] = e
+	if at is Array and at.size() == 3:
+		e.at = Vector3(float(at[0]), float(at[1]), float(at[2]))
 	var pb: AudioStreamGeneratorPlayback = e.gen
 	var samples := Adpcm.decode(Marshalls.base64_to_raw(data))
 	if pb.get_frames_available() < samples.size():
 		return  # too far behind: drop rather than pile up delay
 	for s in samples:
 		pb.push_frame(Vector2(s, s))
+
+
+## Someone leaving: their voice player goes too.
+func forget(user_id: int) -> void:
+	var e: Dictionary = _players.get(user_id, {})
+	if not e.is_empty() and is_instance_valid(e.player):
+		e.player.queue_free()
+	_players.erase(user_id)
+	_talking.erase(user_id)
+
+
+## The talking sign: a dot with two radio waves on each side, white (tinted where used).
+static func wave_texture() -> Texture2D:
+	if _wave:
+		return _wave
+	var w := 112
+	var h := 56
+	var img := Image.create(w, h, false, Image.FORMAT_RGBA8)
+	var c := Vector2(w / 2.0, h / 2.0)
+	for y in h:
+		for x in w:
+			var v := Vector2(x + 0.5, y + 0.5) - c
+			var r := v.length()
+			# Distance to the shapes: the dot, and arcs within 50 degrees of left and right.
+			var d := r - 7.0
+			if absf(v.y) < absf(v.x) * 1.2:
+				d = minf(d, absf(r - 17.0) - 2.6)
+				d = minf(d, absf(r - 27.0) - 2.6)
+			var ink := clampf(0.5 - d, 0.0, 1.0)
+			var edge := clampf(3.0 - d, 0.0, 1.0) * 0.75
+			var col := Color(0.08, 0.07, 0.1).lerp(Color.WHITE, ink)
+			col.a = maxf(ink, edge)
+			img.set_pixel(x, y, col)
+	_wave = ImageTexture.create_from_image(img)
+	return _wave
 
 
 ## IMA ADPCM: 4 bits a sample. A packet: first sample (int16), step index, then nibbles.

@@ -3,6 +3,7 @@ import { parseColors, BODY_PARTS, COLOR_RE } from './colors.js';
 import { wornOf, legacyHat, accessoryExists, cleanWorn } from './accessories.js';
 import { msg } from './i18n.js';
 import { MoveGuard, PLAYGROUND_LIMITS } from './anticheat.js';
+import { Occluders, eyes, canSee } from './occlusion.js';
 import { chatRules, FACES } from './age.js';
 import { filterText, tameMarks } from './filter.js';
 import { PlaceVM } from './studio/vm.js';
@@ -35,6 +36,11 @@ const MIGRATE_DELAY_MS = 4000;
 // How far from the origin a player may be. Places put maps far from the lobby
 // (Meltopia's are 500-700 studs out), so the same room as physics parts.
 const WORLD_LIMIT = 5000;
+// Anti-wallhack: how often the place's blocks and who-sees-whom are worked out, and
+// how long someone stays sent after they were last in sight.
+const OCCLUDERS_EVERY_MS = 2000;
+const VISIBILITY_EVERY_MS = 150;
+const VISIBLE_HOLD_MS = 700;
 // How far a voice carries (studs).
 const VOICE_RANGE = 45;
 // Physics parts (unanchored): one app simulates each, the rest follow its reports.
@@ -346,6 +352,10 @@ export class GameHub {
       if (!server.limitsAt || now - server.limitsAt > 250) {
         server.limitsAt = now;
         server.limits = server.vm.limits();
+      }
+      if (this.anticheat && (!server.occAt || now - server.occAt > OCCLUDERS_EVERY_MS)) {
+        server.occAt = now;
+        server.occ = new Occluders(server.vm.occluders());
       }
     } catch (err) {
       server.failures += 1;
@@ -781,6 +791,8 @@ export class GameHub {
     pl.r = finite(m.r, 100);
     // Built-in states, or a custom animation from the animator (anim://<id>).
     pl.a = ANIMS.has(m.a) || /^anim:\/\/\d{1,10}$/.test(String(m.a)) ? m.a : 'idle';
+    // Whose character the camera follows (spectating): the anti-wallhack looks from there too.
+    pl.watch = Number.isSafeInteger(m.w) && m.w > 0 ? m.w : 0;
     pl.dirty = true;
     pl.posDirty = true;
   }
@@ -803,7 +815,8 @@ export class GameHub {
       me.voiceN = 0;
     }
     if (++me.voiceN > 15) return;
-    const data = JSON.stringify({ t: 'voice', id: conn.user.id, d });
+    // Where it's coming from, for listeners who don't see the speaker (behind a wall).
+    const data = JSON.stringify({ t: 'voice', id: conn.user.id, d, p: me.p.map((v) => +v.toFixed(1)) });
     for (const [id, p] of server.players) {
       if (id === conn.user.id || !p.conn.rules.chat || p.conn.blocks.has(conn.user.id)) continue;
       if (dist(p.p, me.p) <= VOICE_RANGE) p.conn.sendRaw(data);
@@ -1040,9 +1053,14 @@ export class GameHub {
    * Where everyone is, 20 times a second. A place with StarterPlayer.PlayerSyncRange
    * only tells each player about the ones near them (unless Player.SyncAll): what a
    * wallhack can't receive, it can't draw. Someone leaving your range is sent once to
-   * far below the world, so every app (old ones too) stops showing them.
+   * far below the world, so every app (old ones too) stops showing them. The same goes
+   * for players hidden behind the place's walls (see occlusion.js).
    */
   sendStates(server, now) {
+    if (server.occ && (!server.visAt || now - server.visAt >= VISIBILITY_EVERY_MS)) {
+      server.visAt = now;
+      this.updateVisibility(server, now);
+    }
     const state = (id, p) => [id, +p.p[0].toFixed(3), +p.p[1].toFixed(3), +p.p[2].toFixed(3), +p.r.toFixed(3), p.a];
     const dirty = [];
     for (const [id, p] of server.players) {
@@ -1054,7 +1072,8 @@ export class GameHub {
     for (const [rid, r] of server.players) {
       const lim = server.limits?.[String(rid)];
       const range = server.vm && lim && !lim.all ? Number(lim.range) || 0 : 0;
-      if (range <= 0) {
+      const hidden = r.hidden;
+      if (range <= 0 && !hidden) {
         // Everyone in sight: whoever moved, plus anyone this player lost track of before.
         let out = all;
         if (r.seen) {
@@ -1069,7 +1088,7 @@ export class GameHub {
       const out = [];
       for (const [id, p] of server.players) {
         if (id === rid) continue;
-        const near = dist(p.p, r.p) <= range;
+        const near = (range <= 0 || dist(p.p, r.p) <= range) && !hidden?.has(id);
         if (near && (dirty.includes(id) || !r.seen.has(id))) {
           out.push(state(id, p));
           r.seen.add(id);
@@ -1079,6 +1098,36 @@ export class GameHub {
         }
       }
       if (out.length) r.conn.send({ t: 's', s: out, ts: now });
+    }
+  }
+
+  /**
+   * Who each player can't see: fully behind solid blocks from every spot their camera
+   * can be in (and the camera of whoever they're spectating). Someone seen stays sent
+   * for a moment after, so peeking around a corner doesn't flicker.
+   */
+  updateVisibility(server, now) {
+    const occ = server.occ;
+    for (const [rid, r] of server.players) {
+      const lim = server.limits?.[String(rid)];
+      if (!lim || lim.check === false || lim.all || isOwner(r.conn.user)) {
+        r.hidden = null;
+        continue;
+      }
+      const zoom = Math.min(Math.max(Number(lim.zoom) || 16, 0), 60);
+      const from = eyes(occ, r.p, zoom);
+      const w = r.watch && r.watch !== rid ? server.players.get(r.watch) : null;
+      if (w) from.push(...eyes(occ, w.p, zoom));
+      r.seenUntil ??= new Map();
+      const hidden = new Set();
+      for (const [id, p] of server.players) {
+        if (id === rid) continue;
+        if ((r.seenUntil.get(id) || 0) > now + VISIBLE_HOLD_MS - VISIBILITY_EVERY_MS * 2) continue;
+        if (canSee(occ, from, p.p)) r.seenUntil.set(id, now + VISIBLE_HOLD_MS);
+        else if ((r.seenUntil.get(id) || 0) < now) hidden.add(id);
+      }
+      for (const id of r.seenUntil.keys()) if (!server.players.has(id)) r.seenUntil.delete(id);
+      r.hidden = hidden.size ? hidden : null;
     }
   }
 

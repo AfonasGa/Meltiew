@@ -60,6 +60,11 @@ export class PlaceVM {
     return this._call('__limits');
   }
 
+  /** Opaque blocks for the anti-wallhack: [x, y, z, hx, hy, hz, m11..m33] each. */
+  occluders() {
+    return this._call('__occluders');
+  }
+
   memoryUsed() {
     return this.vm.memoryUsed();
   }

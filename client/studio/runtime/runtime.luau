@@ -4192,6 +4192,38 @@ local function footing(pos, solid)
 	return grounded, climb
 end
 
+-- For the server's anti-wallhack: the solid-looking blocks in the world (not see-through,
+-- big in at least two directions, outside characters). Players fully behind one aren't
+-- sent to you. [x, y, z, half X, half Y, half Z, rotation matrix (9)] each.
+G.__occluders = function()
+	local characters = {}
+	for _, player in playersByUser do
+		local ch = D[player].props.Character
+		if ch and D[ch] then
+			characters[#characters + 1] = ch
+		end
+	end
+	local out = {}
+	for _, part in queryParts({ FilterDescendantsInstances = characters, FilterType = "Exclude" }) do
+		local p = D[part].props
+		local sz = p.Size
+		if (p.Shape == nil or p.Shape == "Block") and (tonumber(p.Transparency) or 0) < 0.3 and sz then
+			local a, b, c = sz.X, sz.Y, sz.Z
+			-- the middle one of the three sizes
+			local mid = math.max(math.min(a, b), math.min(math.max(a, b), c))
+			if mid >= 1.5 then
+				local m = rotMatrix(p.Rotation)
+				local e = { p.Position.X, p.Position.Y, p.Position.Z, a / 2, b / 2, c / 2 }
+				for i = 1, 9 do
+					e[6 + i] = m[i]
+				end
+				out[#out + 1] = e
+			end
+		end
+	end
+	return json.encode(out)
+end
+
 G.__limits = function()
 	local out = {}
 	local ws = services.Workspace and D[services.Workspace].props or {}
@@ -4218,6 +4250,8 @@ G.__limits = function()
 			-- the place lets this player see everyone (Player.SyncAll: spectators, abilities).
 			range = starterValue("PlayerSyncRange") or 0,
 			all = D[player].props.SyncAll == true,
+			-- how far the camera can get from the head (the anti-wallhack looks from there too)
+			zoom = D[player].props.CameraMode == "LockFirstPerson" and 0.5 or tonumber(D[player].props.CameraMaxZoom) or 16,
 		}
 		local root = characterRoot(player)
 		local pos = root and D[root] and D[root].props.Position

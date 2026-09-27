@@ -13,6 +13,7 @@ var _snaps: Array = []  # [local_ms, pos, yaw, anim]
 var _name_tag: Label3D
 var _role_tag: Label3D
 var _bubble: GameBubble
+var _talk: Sprite3D
 var _dead := false
 ## When this player died (ms). Snapshots are played a little late, so older ones
 ## (still alive) must not bring them back and then kill them a second time.
@@ -71,6 +72,21 @@ func set_state(p: Vector3, yaw: float, anim: String) -> void:
 		_snaps.pop_front()
 
 
+## Radio waves over their name while they talk in voice chat.
+func set_talking(on: bool) -> void:
+	if on and _talk == null:
+		_talk = Sprite3D.new()
+		_talk.texture = Voice.wave_texture()
+		_talk.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+		_talk.pixel_size = 0.006
+		_talk.no_depth_test = true
+		_talk.position.y = 2.8
+		_talk.modulate = UI.MINT
+		add_child(_talk)
+	if _talk:
+		_talk.visible = on
+
+
 func show_bubble(text: String) -> void:
 	_bubble.show_text(text)
 
@@ -87,6 +103,8 @@ func shatter() -> void:
 
 
 func _process(delta: float) -> void:
+	if _talk and _talk.visible:
+		_talk.scale = Vector3.ONE * (1.0 + 0.12 * sin(Time.get_ticks_msec() / 90.0))
 	# Name tags ride on the head (lower when sitting) and step aside for a chat bubble.
 	var top := avatar.top_y() - global_position.y
 	_name_tag.position.y = top + 0.3
