@@ -18,12 +18,12 @@ export class Occluders {
     for (const b of boxes || []) {
       if (!Array.isArray(b) || b.length < 15 || !b.every(Number.isFinite)) continue;
       if (b.length > 15 && !(b[15] & flag)) continue;
-      const [x, y, z, hx, hy, hz, ...m] = b;
+      const [x, y, z, hx, hy, hz, ...m] = b.slice(0, 15);
       // World-space extents of the rotated box.
       const ex = Math.abs(m[0]) * hx + Math.abs(m[1]) * hy + Math.abs(m[2]) * hz;
       const ey = Math.abs(m[3]) * hx + Math.abs(m[4]) * hy + Math.abs(m[5]) * hz;
       const ez = Math.abs(m[6]) * hx + Math.abs(m[7]) * hy + Math.abs(m[8]) * hz;
-      const box = { c: [x, y, z], h: [hx, hy, hz], m, lo: [x - ex, y - ey, z - ez], hi: [x + ex, y + ey, z + ez], seen: 0 };
+      const box = { c: [x, y, z], h: [hx, hy, hz], m, lo: [x - ex, y - ey, z - ez], hi: [x + ex, y + ey, z + ez], seen: 0, moving: (b[15] & 4) !== 0 };
       const i = this.boxes.push(box) - 1;
       // Huge parts (a baseplate) would fill thousands of cells: kept apart, always checked.
       const cx0 = Math.floor(box.lo[0] / CELL), cx1 = Math.floor(box.hi[0] / CELL);
@@ -127,6 +127,7 @@ function underFeet(box, feet) {
     if (d[j] !== 0) inside = false;
   }
   if (inside) {
+    if (box.moving) return true; // somewhere on a moving thing's reach
     // In it: fine near its top (sunk in a little, a slope), not deep inside a wall.
     const u = [r[0], r[1] + 0.8, r[2]];
     for (let j = 0; j < 3; j++) if (Math.abs(m[j] * u[0] + m[3 + j] * u[1] + m[6 + j] * u[2]) > box.h[j]) return true;

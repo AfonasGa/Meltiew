@@ -188,7 +188,8 @@ export class MoveGuard {
     if (limits.grounded === undefined) return null; // the playground: no footing info
     const g = Math.max(limits.gravity, 1);
     const free = limits.floating || limits.climb || inGrace;
-    const jump = Math.max(limits.jump, this.air?.jump || 0);
+    // (the playground: a normal jump except off its trampolines, see game.js)
+    const jump = Math.max(limits.airJump ?? limits.jump, this.air?.jump || 0);
     const apex = (jump * jump) / (2 * g) + APEX_SLACK;
     const base = this.base || { p: pos.slice(), t: now };
     if (limits.grounded || free) {
@@ -211,10 +212,10 @@ export class MoveGuard {
       return this._violate('fly', now, base.p);
     }
     if (!this.air) {
-      this.air = { since: now, top: pos[1], topAt: now, jump: limits.jump };
+      this.air = { since: now, top: pos[1], topAt: now, jump: limits.airJump ?? limits.jump };
       return null;
     }
-    this.air.jump = Math.max(this.air.jump, limits.jump);
+    this.air.jump = Math.max(this.air.jump, limits.airJump ?? limits.jump);
     if (pos[1] > this.air.top + 0.5) {
       // Still going up: fine while the jump lasts, a second jump in the air isn't.
       if (now - this.air.since > (limits.jump / g) * 1000 + AIR_SLACK_MS) {

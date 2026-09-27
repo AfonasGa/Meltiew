@@ -4,6 +4,15 @@ import { wornOf, legacyHat, accessoryExists, cleanWorn } from './accessories.js'
 import { msg } from './i18n.js';
 import { MoveGuard, PLAYGROUND_LIMITS } from './anticheat.js';
 import { Occluders, eyes, canSee } from './occlusion.js';
+import fs from 'node:fs';
+
+// The playground's solid shapes (client/tools/export_playground.tscn writes them), so
+// the fly check knows what players stand on there too.
+const PLAYGROUND_SOLIDS = new Occluders(JSON.parse(fs.readFileSync(new URL('./playground_solids.json', import.meta.url), 'utf8')), 2);
+// Its trampolines: taking off from around them, a bounce goes up to PLAYGROUND_LIMITS.jump.
+const TRAMPOLINES = [22, 20];
+const TRAMPOLINE_RADIUS = 11;
+const PLAYGROUND_JUMP = 8.2;
 import { chatRules, FACES } from './age.js';
 import { filterText, tameMarks } from './filter.js';
 import { PlaceVM } from './studio/vm.js';
@@ -81,6 +90,16 @@ function publicUser(u) {
 /** The platform's owner (nrz): the only one with the in-game admin panel. */
 export function isOwner(user) {
   return user?.role === 'owner';
+}
+
+/** Does a LocalScript in this place make parts (a world built in each app, like BlockCraft's)? */
+function buildsWorldInApp(melt) {
+  const walk = (n) => {
+    if (!n || typeof n !== 'object') return false;
+    if (n.c === 'LocalScript' && /Instance\.new\(\s*["'](Part|Seat|SpawnLocation)["']/.test(String(n.p?.Source || ''))) return true;
+    return (n.k || []).some(walk);
+  };
+  return walk(melt?.tree);
 }
 
 function dist(a, b) {
@@ -203,6 +222,9 @@ export class GameHub {
       physOwn: {}, // ownership changes to announce this tick
       physVm: new Map(), // latest update per part, for the scripts
       physAt: 0,
+      // The place builds solid parts in players' apps (a LocalScript's Instance.new):
+      // the server can't know what they stand on, so it doesn't judge flying there.
+      clientWorld: buildsWorldInApp(melt),
     };
     this.servers.set(id, server);
     this.routeOps(server, vm.init({ role: 'server', place: melt, seed: crypto.randomInt(1 << 30) }));
@@ -786,10 +808,17 @@ export class GameHub {
     // The platform owner flies and speeds around with the in-game admin panel.
     if (!this.anticheat || isOwner(conn.user)) pl.guard.reset(pos);
     else {
-      const lim = this.limitsFor(conn.server, conn.user.id);
+      const lim = { ...this.limitsFor(conn.server, conn.user.id) };
       // Footing for this very position against the place's solids (the runtime's own
       // answer is a quarter second old, but knows about parts moving right now).
-      if (conn.server?.solids && lim.grounded !== undefined) {
+      if (!conn.server?.vm) {
+        // The playground: its own shapes; a normal jump except off the trampolines.
+        const from = pl.guard.base?.p || pos;
+        if (Math.hypot(from[0] - TRAMPOLINES[0], from[2] - TRAMPOLINES[1]) > TRAMPOLINE_RADIUS) lim.airJump = PLAYGROUND_JUMP;
+        lim.standing = PLAYGROUND_SOLIDS.standing(pos);
+        lim.grounded = lim.standing;
+      } else if (conn.server?.clientWorld) delete lim.grounded;
+      else if (conn.server?.solids && lim.grounded !== undefined) {
         lim.standing = conn.server.solids.standing(pos);
         lim.grounded = lim.standing || lim.grounded;
       }
