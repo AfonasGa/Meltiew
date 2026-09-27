@@ -38,7 +38,7 @@ const MIGRATE_DELAY_MS = 4000;
 const WORLD_LIMIT = 5000;
 // Anti-wallhack: how often the place's blocks and who-sees-whom are worked out, and
 // how long someone stays sent after they were last in sight.
-const OCCLUDERS_EVERY_MS = 2000;
+const GEOMETRY_EVERY_MS = 1000;
 const VISIBILITY_EVERY_MS = 150;
 const VISIBLE_HOLD_MS = 700;
 // How far a voice carries (studs).
@@ -353,9 +353,11 @@ export class GameHub {
         server.limitsAt = now;
         server.limits = server.vm.limits();
       }
-      if (this.anticheat && (!server.occAt || now - server.occAt > OCCLUDERS_EVERY_MS)) {
+      if (this.anticheat && (!server.occAt || now - server.occAt > GEOMETRY_EVERY_MS)) {
         server.occAt = now;
-        server.occ = new Occluders(server.vm.occluders());
+        const geo = server.vm.geometry();
+        server.occ = new Occluders(geo, 1);
+        server.solids = new Occluders(geo, 2);
       }
     } catch (err) {
       server.failures += 1;
@@ -784,7 +786,14 @@ export class GameHub {
     // The platform owner flies and speeds around with the in-game admin panel.
     if (!this.anticheat || isOwner(conn.user)) pl.guard.reset(pos);
     else {
-      const bad = pl.guard.check(pos, this.limitsFor(conn.server, conn.user.id));
+      const lim = this.limitsFor(conn.server, conn.user.id);
+      // Footing for this very position against the place's solids (the runtime's own
+      // answer is a quarter second old, but knows about parts moving right now).
+      if (conn.server?.solids && lim.grounded !== undefined) {
+        lim.standing = conn.server.solids.standing(pos);
+        lim.grounded = lim.standing || lim.grounded;
+      }
+      const bad = pl.guard.check(pos, lim);
       if (bad) return this.caught(conn, pl, bad);
     }
     pl.p = pos;
@@ -800,7 +809,9 @@ export class GameHub {
   /**
    * Voice: 100 ms of the speaker's microphone (12 kHz ADPCM, base64) goes to players
    * within earshot. Not for those whose age rules turn chat off (either way), not in
-   * servers without chat, not from someone muted, and never to someone who blocked them.
+   * servers without chat, not from someone muted, and never between people where
+   * either blocked the other. Voice can't be filtered like text, so it only goes
+   * between people of the same age group: adults hear adults, teens hear teens.
    */
   voice(conn, m) {
     const server = conn.server;
@@ -818,7 +829,8 @@ export class GameHub {
     // Where it's coming from, for listeners who don't see the speaker (behind a wall).
     const data = JSON.stringify({ t: 'voice', id: conn.user.id, d, p: me.p.map((v) => +v.toFixed(1)) });
     for (const [id, p] of server.players) {
-      if (id === conn.user.id || !p.conn.rules.chat || p.conn.blocks.has(conn.user.id)) continue;
+      if (id === conn.user.id || !p.conn.rules.chat || p.conn.blocks.has(conn.user.id) || conn.blocks.has(id)) continue;
+      if (Boolean(p.conn.rules.filter_chat) !== Boolean(conn.rules.filter_chat)) continue;
       if (dist(p.p, me.p) <= VOICE_RANGE) p.conn.sendRaw(data);
     }
   }
@@ -850,7 +862,7 @@ export class GameHub {
     // were doing a moment ago: their app hasn't heard about it yet.
     server.recentLimits ??= new Map();
     const t = Date.now();
-    const hist = (server.recentLimits.get(userId) || []).filter((h) => t - h.t <= 1500);
+    const hist = (server.recentLimits.get(userId) || []).filter((h) => t - h.t <= 3500);
     hist.push({ t, walk: cur.walk, sprint: cur.sprint, jump: cur.jump });
     server.recentLimits.set(userId, hist);
     for (const h of hist) {

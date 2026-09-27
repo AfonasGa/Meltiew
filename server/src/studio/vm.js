@@ -60,9 +60,9 @@ export class PlaceVM {
     return this._call('__limits');
   }
 
-  /** Opaque blocks for the anti-wallhack: [x, y, z, hx, hy, hz, m11..m33] each. */
-  occluders() {
-    return this._call('__occluders');
+  /** The world's boxes for the anti-cheat: [x, y, z, hx, hy, hz, m11..m33, flags] each. */
+  geometry() {
+    return this._call('__geometry');
   }
 
   memoryUsed() {

@@ -201,3 +201,175 @@ test('in the air: a real jump and a long fall pass, jumping off nothing and hang
   }
   assert.deepEqual(ok, []);
 });
+
+// The fly cheats people actually use, against a real map: the server works out what's
+// under the feet itself (Occluders.standing), like game.js does.
+import { Occluders } from '../src/occlusion.js';
+
+describe_fly();
+
+function describe_fly() {
+  const I = [1, 0, 0, 0, 1, 0, 0, 0, 1];
+  const solids = new Occluders([
+    [0, -1, 0, 200, 1, 200, ...I, 2], // floor, top at y = 0
+    [20, 5, 0, 1, 5, 10, ...I, 2], // a wall at x = 19..21, 10 high
+    [0, 1, 20, 3, 1, 3, ...I, 2], // a 2-high box (a jump gets you on it)
+    [-20, 6, 0, 3, 6, 3, ...I, 2], // a 12-high tower
+  ], 2);
+  const run = (guard, path, t0 = 1000, extra = {}) => {
+    const bad = [];
+    let t = t0;
+    for (const p of path) {
+      t += STEP;
+      const standing = solids.standing(p);
+      const r = guard.check(p, { ...S, grounded: standing, standing, floating: false, climb: false, ...extra }, t);
+      if (r && !r.silent) bad.push(r.reason);
+    }
+    return { bad, t };
+  };
+  // Physics like the app: jump at `vy` whenever asked, fall with gravity, land on the floor.
+  const sim = (from, steps, { jumpAt = [], ground = 0, dx = 0.3, vy0 = 0 } = {}) => {
+    const out = [];
+    let [x, y, z] = from;
+    let v = vy0;
+    for (let k = 0; k < steps; k++) {
+      if (jumpAt.includes(k)) v = S.jump;
+      v -= (S.gravity * STEP) / 1000;
+      x += dx;
+      y += (v * STEP) / 1000;
+      if (y <= ground) {
+        y = ground;
+        v = 0;
+      }
+      out.push([x, y, z]);
+    }
+    return out;
+  };
+
+  test('fly: ordinary jumps, and hopping onto a box a jump reaches, are fine', () => {
+    const g = new MoveGuard([-5, 0, 20], 0);
+    const r1 = run(g, sim([-5, 0, 20], 60, { jumpAt: [5, 30], dx: 0.25 }), 2000);
+    assert.deepEqual(r1.bad, []);
+    // Onto the 2-high box: jump from its edge, land on top (the apex is ~1.5 + slack).
+    const g2 = new MoveGuard([-3.5, 0, 20], 0);
+    const path = [];
+    for (let k = 0; k < 6; k++) path.push([-3.5, [0.35, 0.65, 0.9, 1.2, 1.6, 2][k], 20]);
+    for (let k = 0; k < 10; k++) path.push([-2.5 + k * 0.2, 2, 20]);
+    assert.deepEqual(run(g2, path, 2000).bad, []);
+  });
+
+  test('fly: air jumps (jumping again in mid-air to go up) are caught', () => {
+    const g = new MoveGuard([0, 0, 0], 0);
+    // Jump, and jump again every time the arc starts to fall.
+    const path = [];
+    let y = 0;
+    let v = S.jump;
+    for (let k = 0; k < 80; k++) {
+      v -= (S.gravity * STEP) / 1000;
+      if (v < 0) v = S.jump;
+      y += (v * STEP) / 1000;
+      path.push([k * 0.1, y, 0]);
+    }
+    const { bad } = run(g, path, 2000);
+    assert.ok(bad.includes('fly'), JSON.stringify(bad));
+    // Caught before getting 4 studs up.
+    const firstAt = path.findIndex((p, i) => i >= 0 && p[1] > 3.2);
+    assert.ok(firstAt > 0);
+  });
+
+  test('fly: slowly floating up (even hugging a wall) is caught before the top', () => {
+    const g = new MoveGuard([18.5, 0, 0], 0);
+    const path = [];
+    for (let k = 0; k < 60; k++) path.push([18.5, k * 0.2, 0]); // 4 studs a second, by the wall
+    const { bad } = run(g, path, 2000);
+    assert.ok(bad.includes('fly'), JSON.stringify(bad));
+  });
+
+  test('fly: getting onto the tall tower without a ladder is caught', () => {
+    const g = new MoveGuard([-15, 0, 0], 0);
+    const path = [];
+    // Up fast in half a second (not a teleport), then onto the roof.
+    for (let k = 0; k < 10; k++) path.push([-15, (k + 1) * 1.25, 0]);
+    for (let k = 0; k < 10; k++) path.push([-15 - k * 0.3, 12.5, 0]);
+    const { bad } = run(g, path, 2000);
+    assert.ok(bad.includes('fly'), JSON.stringify(bad));
+    // And sent back down to where they took off.
+    assert.ok(g.good[1] < 1, JSON.stringify(g.good));
+  });
+
+  test('fly: stairs are walked up, falls off the tower are fine', () => {
+    const steps = new Occluders([[0, -1, 0, 200, 1, 200, ...I, 2], ...[...Array(10)].map((_, i) => [5 + i, 0.25 + i * 0.25, 0, 0.5, 0.25 + i * 0.25, 2, ...I, 2])], 2);
+    const g = new MoveGuard([3, 0, 0], 0);
+    let t = 2000;
+    const bad = [];
+    for (let k = 0; k <= 40; k++) {
+      t += STEP;
+      const x = 3 + k * 0.3;
+      const i = Math.floor(x - 4.5);
+      const y = i >= 0 ? Math.min(i, 9) * 0.5 + 0.5 : 0;
+      const standing = steps.standing([x, y, 0]);
+      const r = g.check([x, y, 0], { ...S, grounded: standing, standing, floating: false, climb: false }, t);
+      if (r && !r.silent) bad.push(r.reason);
+    }
+    assert.deepEqual(bad, []);
+    const g2 = new MoveGuard([-20, 12, 0], 0);
+    assert.deepEqual(run(g2, sim([-20, 12, 0], 50, { dx: 0.3, ground: 0 }), 2000).bad, []);
+  });
+
+  test('fly: a lift the scripts move (only the runtime knows it is ground) is fine', () => {
+    const g = new MoveGuard([50, 0, 50], 0);
+    let t = 2000;
+    const bad = [];
+    for (let k = 0; k < 60; k++) {
+      t += STEP;
+      const p = [50, k * 0.4, 50]; // 8 studs a second up, on a platform the solids don't have yet
+      const r = g.check(p, { ...S, grounded: true, standing: false, floating: false, climb: false }, t);
+      if (r && !r.silent) bad.push(r.reason);
+    }
+    assert.deepEqual(bad, []);
+  });
+}
+
+// A sped-up game clock (Cheat Engine's speedhack): the app moves faster and sends more.
+test('speedhack: 1.3x running is caught, normal running for a long time is not', () => {
+  const run = (speed, hz, secs) => {
+    const g = new MoveGuard([0, 0, 0], 0);
+    const bad = [];
+    const dt = 1000 / hz;
+    for (let t = 2000, x = 0; t < 2000 + secs * 1000; t += dt) {
+      x += (S.sprint * speed * dt) / 1000;
+      const r = g.check([x, 0, 0], { ...S, grounded: true, standing: true }, t);
+      if (r && !r.silent) bad.push(r.reason);
+      if (r) x = g.good[0];
+    }
+    return bad;
+  };
+  assert.deepEqual(run(1, 15, 30), []);
+  assert.ok(run(1.3, 15, 10).includes('speed'));
+  // The clock sped up: updates come 1.5x as often even if each one moves normally.
+  assert.ok(run(1, 22.5, 15).includes('timer'));
+});
+
+test('speedhack: one network hiccup delivering a backlog is not a sped-up clock', () => {
+  const g = new MoveGuard([0, 0, 0], 0);
+  const bad = [];
+  let t = 2000;
+  let x = 0;
+  const send = () => {
+    x += S.walk / 15;
+    const r = g.check([x, 0, 0], { ...S, grounded: true, standing: true }, t);
+    if (r && !r.silent) bad.push(r.reason);
+  };
+  for (let k = 0; k < 150; k++) {
+    t += 1000 / 15;
+    send();
+  }
+  // 2 seconds stuck, then all of them at once.
+  t += 2000;
+  for (let k = 0; k < 30; k++) send();
+  for (let k = 0; k < 150; k++) {
+    t += 1000 / 15;
+    send();
+  }
+  assert.ok(!bad.includes('timer'), JSON.stringify(bad));
+});

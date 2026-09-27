@@ -6,14 +6,18 @@
 const CELL = 16;
 const FAR = 1e9;
 
+/**
+ * A place's boxes on a grid. boxes: [x, y, z, hx, hy, hz, m11..m33, flags] (the
+ * runtime's __geometry); `flag` picks which: 1 = hides players, 2 = solid.
+ */
 export class Occluders {
-  /** boxes: [x, y, z, hx, hy, hz, m11..m33] from the place (the runtime's __occluders). */
-  constructor(boxes) {
+  constructor(boxes, flag = 1) {
     this.boxes = [];
     this.grid = new Map();
     this.stamp = 0;
     for (const b of boxes || []) {
       if (!Array.isArray(b) || b.length < 15 || !b.every(Number.isFinite)) continue;
+      if (b.length > 15 && !(b[15] & flag)) continue;
       const [x, y, z, hx, hy, hz, ...m] = b;
       // World-space extents of the rotated box.
       const ex = Math.abs(m[0]) * hx + Math.abs(m[1]) * hy + Math.abs(m[2]) * hz;
@@ -81,6 +85,58 @@ export class Occluders {
   blocked(a, b) {
     return this.hit(a, b) < 1;
   }
+
+  /**
+   * Standing on something (positions are the feet): a solid right under the feet or
+   * under the edge of the body. A wall beside you isn't a floor, and neither is the
+   * inside of a wall you've clipped into.
+   */
+  standing(pos) {
+    const stamp = ++this.stamp;
+    const cx0 = Math.floor((pos[0] - 1) / CELL), cx1 = Math.floor((pos[0] + 1) / CELL);
+    const cz0 = Math.floor((pos[2] - 1) / CELL), cz1 = Math.floor((pos[2] + 1) / CELL);
+    const lists = [this.grid.get('big')];
+    for (let cx = cx0; cx <= cx1; cx++) for (let cz = cz0; cz <= cz1; cz++) lists.push(this.grid.get(key(cx, cz)));
+    for (const list of lists) {
+      if (!list) continue;
+      for (const i of list) {
+        const box = this.boxes[i];
+        if (box.seen === stamp) continue;
+        box.seen = stamp;
+        if (pos[1] < box.lo[1] - 1 || pos[1] > box.hi[1] + 2 || pos[0] < box.lo[0] - 1 || pos[0] > box.hi[0] + 1 || pos[2] < box.lo[2] - 1 || pos[2] > box.hi[2] + 1) continue;
+        for (const [ox, oz] of FOOT) if (underFeet(box, [pos[0] + ox, pos[1], pos[2] + oz])) return true;
+      }
+    }
+    return false;
+  }
+}
+
+const FOOT = [[0, 0], [0.4, 0], [-0.4, 0], [0, 0.4], [0, -0.4]];
+const REACH = 0.8; // how far below the feet the ground may be (rounding, steps, slopes)
+
+// The same test as the runtime's footing: the box's nearest point is below the feet.
+function underFeet(box, feet) {
+  const m = box.m;
+  const r = [feet[0] - box.c[0], feet[1] - box.c[1], feet[2] - box.c[2]];
+  const d = [0, 0, 0];
+  let inside = true;
+  for (let j = 0; j < 3; j++) {
+    const l = m[j] * r[0] + m[3 + j] * r[1] + m[6 + j] * r[2];
+    const c = Math.max(-box.h[j], Math.min(box.h[j], l));
+    d[j] = l - c;
+    if (d[j] !== 0) inside = false;
+  }
+  if (inside) {
+    // In it: fine near its top (sunk in a little, a slope), not deep inside a wall.
+    const u = [r[0], r[1] + 0.8, r[2]];
+    for (let j = 0; j < 3; j++) if (Math.abs(m[j] * u[0] + m[3 + j] * u[1] + m[6 + j] * u[2]) > box.h[j]) return true;
+    return false;
+  }
+  const wx = m[0] * d[0] + m[1] * d[1] + m[2] * d[2];
+  const wy = m[3] * d[0] + m[4] * d[1] + m[5] * d[2];
+  const wz = m[6] * d[0] + m[7] * d[1] + m[8] * d[2];
+  const len = Math.hypot(wx, wy, wz);
+  return len <= REACH && wy >= len * 0.6;
 }
 
 const key = (cx, cz) => (cx + 4096) * 8192 + (cz + 4096);
@@ -122,7 +178,7 @@ const CAM_DIRS = [[0, 1, 0], [1, 0.6, 0], [-1, 0.6, 0], [0, 0.6, 1], [0, 0.6, -1
 
 /** Where a player at `pos` can be looking from: the head and camera spots, pulled in by walls. */
 export function eyes(occ, pos, zoom) {
-  const head = [pos[0], pos[1] + 1.5, pos[2]];
+  const head = [pos[0], pos[1] + 1.6, pos[2]];
   const out = [head];
   if (zoom <= 1) return out;
   for (const d of CAM_DIRS) {
@@ -138,7 +194,7 @@ export function eyes(occ, pos, zoom) {
 function targets(pos) {
   const [x, y, z] = pos;
   return [
-    [x, y + 1.5, z], [x, y + 0.5, z], [x, y - 0.8, z],
+    [x, y + 1.6, z], [x, y + 0.9, z], [x, y + 0.3, z],
     [x + 1.5, y + 1, z], [x - 1.5, y + 1, z], [x, y + 1, z + 1.5], [x, y + 1, z - 1.5],
   ];
 }

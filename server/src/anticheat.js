@@ -8,16 +8,32 @@
 export const PLAYGROUND_LIMITS = { walk: 5, sprint: 17, jump: 26, gravity: 22, ceiling: 90, check: true };
 
 const WINDOW_MS = 1000; // horizontal speed is measured over this long
+// ...and over this long, tighter: a sped-up game clock (a "speedhack") gains a little
+// every second, which a short window hides in its slack.
+const LONG_WINDOW_MS = 3000;
+const LONG_FACTOR = 1.12;
+const LONG_SLACK = 3;
+// The app sends where it is 15 times a second at most; its clock sped up sends more.
+// Counted over RATE_WINDOW_MS; twice over the limit in a row (a network hiccup that
+// delivers a backlog at once happens only once) is a sped-up clock.
+export const SEND_HZ = 15;
+const RATE_WINDOW_MS = 5000;
+const RATE_FACTOR = 1.3;
 const RISE_WINDOW_MS = 3000; // climbing is measured over this long
 const SLACK_H = 4; // metres of slack for lag and rounding
 const SLACK_RISE = 3;
 const TELEPORT_SLACK = 12; // a single jump this far beyond the limit is a teleport
 const DECAY_MS = 4000; // one violation point fades every this many ms
 export const KICK_POINTS = 14;
-const POINTS = { speed: 1, rise: 2, ceiling: 3, teleport: 3, fly: 2 };
+const POINTS = { speed: 1, rise: 2, ceiling: 3, teleport: 3, fly: 2, timer: 4 };
 // In the air (Studio places, which tell us what's under each player): lag and the
 // footing check (4 times a second) get this much slack; the app never falls faster.
 const AIR_SLACK_MS = 600;
+// Above where they took off, a jump reaches v²/2g; this much more for steps and lag.
+const APEX_SLACK = 1.5;
+// Standing on something only the place's scripts know about right now (a lift, a moving
+// platform): the take-off height follows it up at most this fast (studs a second).
+const LIFT_SPEED = 14;
 const MAX_FALL = 50;
 const EXPECT_MS = 4000; // how long a server teleport waits for the client to arrive
 const EXPECT_RADIUS = 14; // "arrived": this close to where the server put them
@@ -31,6 +47,23 @@ export class MoveGuard {
     this.lastDecay = now;
     this.total = 0;
     this.lastReason = '';
+    this.sent = [];
+    this.rateStrikes = 0;
+    this.rateAt = 0;
+  }
+
+  /** Too many updates for a normal clock (see SEND_HZ); true when it's time to act. */
+  _fastClock(now) {
+    this.sent.push(now);
+    while (this.sent.length && now - this.sent[0] > RATE_WINDOW_MS) this.sent.shift();
+    if (now - this.rateAt < RATE_WINDOW_MS) return false; // one verdict per window
+    if (this.sent.length <= (SEND_HZ * RATE_WINDOW_MS * RATE_FACTOR) / 1000) {
+      if (now - this.rateAt > RATE_WINDOW_MS * 2) this.rateStrikes = 0;
+      return false;
+    }
+    this.rateAt = now;
+    this.sent = [];
+    return ++this.rateStrikes >= 2;
   }
 
   /** A legit jump in position (spawn, respawn, server teleport): start over from here. */
@@ -38,6 +71,7 @@ export class MoveGuard {
     this.correcting = null;
     this.air = null;
     this.arriving = null;
+    this.base = { p: pos.slice(), t: now };
     this.good = pos.slice();
     this.samples = [{ t: now, p: pos.slice() }];
     this.graceUntil = now + 1500; // the client needs a moment to actually move there
@@ -73,6 +107,7 @@ export class MoveGuard {
    */
   check(pos, limits, now = Date.now()) {
     this._decay(now);
+    if (limits.check && this._fastClock(now)) return this._violate('timer', now);
     if (this.gliding) {
       if (now > this.gliding.until) this.gliding = null;
       else if (distToSegment(pos, this.gliding.from, this.gliding.to) <= GLIDE_RADIUS) {
@@ -125,6 +160,11 @@ export class MoveGuard {
       const secs = Math.max((now - old.t) / 1000, 0.2);
       if (distH(pos, old.p) > maxH * secs * 1.25 + SLACK_H) return this._violate('speed', now, old.p);
     }
+    const older = this._sampleBefore(now - LONG_WINDOW_MS);
+    if (older && !inGrace && now - older.t < LONG_WINDOW_MS + 1500) {
+      const secs = (now - older.t) / 1000;
+      if (distH(pos, older.p) > maxH * secs * LONG_FACTOR + LONG_SLACK) return this._violate('speed', now, older.p);
+    }
     // Going up: more than a jump (or trampoline) gives, plus steady climbing (Climbable
     // walls, stairs) at up to `limits.rise` studs a second, within a few seconds.
     if (!inGrace) {
@@ -146,15 +186,35 @@ export class MoveGuard {
    */
   _air(pos, limits, now, inGrace) {
     if (limits.grounded === undefined) return null; // the playground: no footing info
-    if (limits.grounded || limits.floating || limits.climb || inGrace) {
+    const g = Math.max(limits.gravity, 1);
+    const free = limits.floating || limits.climb || inGrace;
+    const jump = Math.max(limits.jump, this.air?.jump || 0);
+    const apex = (jump * jump) / (2 * g) + APEX_SLACK;
+    const base = this.base || { p: pos.slice(), t: now };
+    if (limits.grounded || free) {
+      // Landed higher than a jump from where they took off can reach: they flew up there.
+      if (this.air && limits.standing && !free && pos[1] > base.p[1] + apex) {
+        this.air = null;
+        return this._violate('fly', now, base.p);
+      }
+      // Ground the server checked itself (or floating, climbing): take off from here.
+      // Ground only the place's scripts vouch for (it may be moving): follow it up slowly.
+      let y = pos[1];
+      if (!limits.standing && !free) y = Math.min(y, base.p[1] + (LIFT_SPEED * (now - base.t)) / 1000);
+      this.base = { p: [pos[0], y, pos[2]], t: now };
       this.air = null;
       return null;
     }
+    // In the air higher than the jump goes: flying, air-jumping, climbing thin air.
+    if (pos[1] > base.p[1] + apex) {
+      this.air = null;
+      return this._violate('fly', now, base.p);
+    }
     if (!this.air) {
-      this.air = { since: now, top: pos[1], topAt: now };
+      this.air = { since: now, top: pos[1], topAt: now, jump: limits.jump };
       return null;
     }
-    const g = Math.max(limits.gravity, 1);
+    this.air.jump = Math.max(this.air.jump, limits.jump);
     if (pos[1] > this.air.top + 0.5) {
       // Still going up: fine while the jump lasts, a second jump in the air isn't.
       if (now - this.air.since > (limits.jump / g) * 1000 + AIR_SLACK_MS) {

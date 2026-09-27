@@ -4174,13 +4174,53 @@ local function nearPart(part, pos, radius)
 	return d2 <= radius * radius
 end
 
+-- Something to stand on right under `feet` (the reported position is the feet): the
+-- nearest point of the part is below them, not beside (a wall you hug isn't a floor),
+-- and they aren't buried deep inside it.
+local function underFeet(part, feet)
+	local p = D[part].props
+	local m = rotMatrix(p.Rotation)
+	local h = p.Size / 2
+	local r = feet - p.Position
+	local l = { r.X * m[1] + r.Y * m[4] + r.Z * m[7], r.X * m[2] + r.Y * m[5] + r.Z * m[8], r.X * m[3] + r.Y * m[6] + r.Z * m[9] }
+	local e = { h.X, h.Y, h.Z }
+	local d = {}
+	local inside = true
+	for i = 1, 3 do
+		local c = math.clamp(l[i], -e[i], e[i])
+		d[i] = l[i] - c
+		if d[i] ~= 0 then
+			inside = false
+		end
+	end
+	if inside then
+		-- In it: fine near its top (sunk in a little, a slope), not deep inside a wall.
+		local up = feet + v3(0, 0.8, 0) - p.Position
+		for i = 1, 3 do
+			local u = up.X * m[i] + up.Y * m[i + 3] + up.Z * m[i + 6]
+			if math.abs(u) > e[i] then
+				return true
+			end
+		end
+		return false
+	end
+	local wx = m[1] * d[1] + m[2] * d[2] + m[3] * d[3]
+	local wy = m[4] * d[1] + m[5] * d[2] + m[6] * d[3]
+	local wz = m[7] * d[1] + m[8] * d[2] + m[9] * d[3]
+	local len = math.sqrt(wx * wx + wy * wy + wz * wz)
+	return len <= 1.6 and wy >= len * 0.6
+end
+
 local function footing(pos, solid)
-	-- The feet are a bit below the reported position; anything within reach under them counts.
-	local feet = pos - v3(0, 0.9, 0)
 	local grounded, climb = false, false
 	for _, part in solid do
-		if not grounded and nearPart(part, feet, 1.3) then
-			grounded = true
+		if not grounded then
+			for _, o in { v3(0, 0, 0), v3(0.4, 0, 0), v3(-0.4, 0, 0), v3(0, 0, 0.4), v3(0, 0, -0.4) } do
+				if underFeet(part, pos + o) then
+					grounded = true
+					break
+				end
+			end
 		end
 		if not climb and D[part].props.Climbable and nearPart(part, pos, 2.5) then
 			climb = true
@@ -4192,10 +4232,11 @@ local function footing(pos, solid)
 	return grounded, climb
 end
 
--- For the server's anti-wallhack: the solid-looking blocks in the world (not see-through,
--- big in at least two directions, outside characters). Players fully behind one aren't
--- sent to you. [x, y, z, half X, half Y, half Z, rotation matrix (9)] each.
-G.__occluders = function()
+-- For the server's anti-cheat: the world's parts outside characters, as boxes
+-- [x, y, z, half X, half Y, half Z, rotation matrix (9), flags]. Flags: 1 = hides what's
+-- behind it (a block, not see-through, big in two directions: the anti-wallhack),
+-- 2 = solid (CanCollide: what players can stand on, for the fly check).
+G.__geometry = function()
 	local characters = {}
 	for _, player in playersByUser do
 		local ch = D[player].props.Character
@@ -4207,16 +4248,24 @@ G.__occluders = function()
 	for _, part in queryParts({ FilterDescendantsInstances = characters, FilterType = "Exclude" }) do
 		local p = D[part].props
 		local sz = p.Size
-		if (p.Shape == nil or p.Shape == "Block") and (tonumber(p.Transparency) or 0) < 0.3 and sz then
+		if sz and p.Position then
 			local a, b, c = sz.X, sz.Y, sz.Z
 			-- the middle one of the three sizes
 			local mid = math.max(math.min(a, b), math.min(math.max(a, b), c))
-			if mid >= 1.5 then
-				local m = rotMatrix(p.Rotation)
+			local flags = 0
+			if (p.Shape == nil or p.Shape == "Block") and (tonumber(p.Transparency) or 0) < 0.3 and mid >= 1.5 then
+				flags += 1
+			end
+			if p.CanCollide ~= false then
+				flags += 2
+			end
+			if flags > 0 then
+				local m = rotMatrix(p.Rotation or v3(0, 0, 0))
 				local e = { p.Position.X, p.Position.Y, p.Position.Z, a / 2, b / 2, c / 2 }
 				for i = 1, 9 do
 					e[6 + i] = m[i]
 				end
+				e[16] = flags
 				out[#out + 1] = e
 			end
 		end
