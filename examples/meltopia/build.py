@@ -185,6 +185,54 @@ def generator(name, x, z, yaw=0):
     ])
 
 
+def extra_gens(k, gens, spawn_points, OX, OZ, half, radius=None, count=3, first=6):
+    """More generator spots, so a full server gets one per survivor (the round keeps only as
+    many as it needs). Picked on a grid: clear ground, as far as possible from the other
+    generators and the spawns, away from the map's edge."""
+    solid = []
+
+    def walk(n):
+        if n.get('c') in ('Part', 'WedgePart', 'Seat', 'SpawnLocation') and n.get('p', {}).get('CanCollide', True):
+            pp = n['p']
+            size, pos = pp['Size']['$v3'], pp['Position']['$v3']
+            # Ground and floors are underfoot; only what stands up gets in the way.
+            if pos[1] + size[1] / 2 > 0.6:
+                rot = pp.get('Rotation', {}).get('$v3', [0, 0, 0])
+                if any(abs(r) > 1e-6 for r in rot):
+                    solid.append(('c', pos[0], pos[2], math.hypot(size[0], size[2]) / 2))
+                else:
+                    solid.append(('b', pos[0], pos[2], size[0] / 2, size[2] / 2))
+        for c in n.get('k', []):
+            walk(c)
+
+    for n in k:
+        walk(n)
+
+    def blocked(sp, x, z, pad=3.5):
+        if sp[0] == 'c':
+            return math.hypot(x - sp[1], z - sp[2]) < sp[3] + pad
+        return abs(x - sp[1]) < sp[3] + pad and abs(z - sp[2]) < sp[4] + pad
+
+    taken = [(g['k'][0]['p']['Position']['$v3'][0], g['k'][0]['p']['Position']['$v3'][2]) for g in gens]
+    taken += [(OX + x, OZ + z) for x, z in spawn_points]
+    out = []
+    for i in range(count):
+        best, best_d = None, 0
+        for gx in range(-int(half) + 12, int(half) - 11, 3):
+            for gz in range(-int(half) + 12, int(half) - 11, 3):
+                x, z = OX + gx, OZ + gz
+                if radius and math.hypot(gx, gz) > radius:
+                    continue
+                if any(blocked(sp, x, z) for sp in solid):
+                    continue
+                d = min(math.hypot(x - tx, z - tz) for tx, tz in taken)
+                if d > best_d:
+                    best, best_d = (x, z), d
+        taken.append(best)
+        out.append(generator('Gen%d' % (first + i), best[0], best[1], (i * 67) % 360))
+    return out
+
+
 def spawns(killer, survivors):
     kids = [part('Killer', (2, 1, 2), (killer[0], 0.5, killer[1]), '#ff0000', transp=1, collide=False, touch=False, shadow=False)]
     for x, z in survivors:
@@ -512,9 +560,10 @@ def camp():
     # Generators, spawns, walls.
     gens = [generator('Gen1', OX - 36, OZ - 30, 35), generator('Gen2', OX + 54, OZ + 14, -80), generator('Gen3', OX + 18, OZ + 50, 180),
             generator('Gen4', OX - 60, OZ + 10, 90), generator('Gen5', OX + 30, OZ - 50, -20)]
+    survivor_spots = [(-30, 10), (30, -10), (-10, 32), (14, 34), (-40, 28), (38, 30), (-6, 12)]
+    gens += extra_gens(k, gens, survivor_spots + [(0, -80)], OX, OZ, 98, radius=68)
     k.append(model('Generators', gens))
-    k.append(spawns((OX, OZ - 80), [(OX - 30, OZ + 10), (OX + 30, OZ - 10), (OX - 10, OZ + 32), (OX + 14, OZ + 34),
-                                     (OX - 40, OZ + 28), (OX + 38, OZ + 30), (OX - 6, OZ + 12)]))
+    k.append(spawns((OX, OZ - 80), [(OX + x, OZ + z) for x, z in survivor_spots]))
     k.append(walls(OX, OZ, 98))
     return model('Camp', k)
 
@@ -692,9 +741,10 @@ def factory():
     # Generators, spawns, walls.
     gens = [generator('Gen1', WX - 18, WZ + 12, 0), generator('Gen2', OX + 40, OZ + 40, 90), generator('Gen3', OX - 54, OZ + 20, 270),
             generator('Gen4', OX + 42, OZ - 24, 90), generator('Gen5', OX - 8, OZ + 70, 180)]
+    survivor_spots = [(10, 50), (-20, 30), (60, 70), (-60, 60), (20, -60), (70, -30), (-30, 70)]
+    gens += extra_gens(k, gens, survivor_spots + [(-76, -76)], OX, OZ, 88, radius=None)
     k.append(model('Generators', gens))
-    k.append(spawns((OX - 76, OZ - 76), [(OX + 10, OZ + 50), (OX - 20, OZ + 30), (OX + 60, OZ + 70), (OX - 60, OZ + 60),
-                                         (OX + 20, OZ - 60), (OX + 70, OZ - 30), (OX - 30, OZ + 70)]))
+    k.append(spawns((OX - 76, OZ - 76), [(OX + x, OZ + z) for x, z in survivor_spots]))
     k.append(walls(OX, OZ, 88))
     return model('Factory', k)
 
@@ -722,6 +772,9 @@ def main():
         nrz = {'colors': {'head': '#f5f1ec', 'torso': '#1c1a22', 'arm_l': '#f5f1ec', 'arm_r': '#f5f1ec', 'leg_l': '#1c1a22', 'leg_r': '#1c1a22'},
                'face': ':|', 'accessories': []}
     melly = {'head': '#f5f1ec', 'torso': '#baa4e2', 'arm_l': '#f5f1ec', 'arm_r': '#f5f1ec', 'leg_l': '#302d38', 'leg_r': '#302d38'}
+    # Alt, the second survivor, looks like the real Alt (saved from /api/users/Alt/look).
+    with open(os.path.join(here, 'alt_look.json'), encoding='utf-8') as f:
+        alt = json.load(f)
 
     lob = lobby()
     # The showcase rig wears the saved nrz look until the live one loads.
@@ -730,7 +783,7 @@ def main():
             node['p'].update({k: v for k, v in appearance('x', nrz['colors'], nrz['face'], nrz['accessories'])['p'].items()})
 
     sounds = ['MusicLobby', 'MusicCalm', 'MusicChase', 'SfxGenDone', 'SfxGenFail', 'SfxPunch', 'SfxSpikeThrow', 'SfxSpikeHit',
-              'SfxRoundStart', 'SfxSurvivorsWin', 'SfxKillerWin', 'SfxTick', 'RenderKiller', 'RenderSurvivor']
+              'SfxRoundStart', 'SfxSurvivorsWin', 'SfxKillerWin', 'SfxTick', 'RenderKiller', 'RenderSurvivor', 'RenderShadowless', 'RenderAlt']
     ids_path = os.path.join(here, 'asset_ids.json')
     ids = {}
     if os.path.exists(ids_path):
@@ -743,12 +796,15 @@ def main():
 
     state = {'c': 'Folder', 'n': 'State', 'k': [
         val('StringValue', 'Phase', 'Lobby'), val('NumberValue', 'Countdown', -1), val('NumberValue', 'Waiting', 0),
-        val('StringValue', 'Map', ''), val('NumberValue', 'KillerId', 0), val('NumberValue', 'GensDone', 0),
+        val('StringValue', 'Map', ''), val('NumberValue', 'KillerId', 0), val('StringValue', 'KillerChar', ''),
+        val('NumberValue', 'GensDone', 0),
         val('NumberValue', 'GensTotal', 5), val('NumberValue', 'TimeLeft', 0), val('NumberValue', 'Release', 0),
         val('NumberValue', 'Alive', 0),
+        # Map vote in the lobby: one count per map in ServerStorage.Maps.
+        {'c': 'Folder', 'n': 'Votes', 'k': [val('NumberValue', n, 0) for n in ('Camp', 'Factory')]},
     ]}
     remotes = {'c': 'Folder', 'n': 'Remotes', 'k': [{'c': 'RemoteEvent', 'n': n} for n in
-                                                     ['Action', 'GenStart', 'GenSolve', 'GenFail', 'Notify', 'Sfx', 'Result', 'Hit']]}
+                                                     ['Action', 'GenStart', 'GenSolve', 'GenFail', 'Notify', 'Sfx', 'Result', 'Hit', 'Vote', 'Reveal', 'Shop', 'Fly', 'Turret', 'Danger']]}
     spike = part('Spike', (0.5, 0.5, 3.2), (0, -500, 0), '#ff3b4f', 'Neon', collide=False, shadow=False, touch=False,
                  kids=[light('#ff3b4f', 2.6, 14)])
 
@@ -765,12 +821,16 @@ def main():
         {'c': 'ServerStorage', 'n': 'ServerStorage', 'k': [
             {'c': 'Folder', 'n': 'Maps', 'k': [camp(), factory()]},
             {'c': 'Folder', 'n': 'Looks', 'k': [appearance('Killer', nrz['colors'], nrz['face'], nrz['accessories']),
-                                                 appearance('Survivor', melly, ':D', [])]},
+                                                 appearance('Survivor', melly, ':D', []),
+                                                 # Melly gone bad: red shirt, evil grin (the >:) face needs app 1.6.2).
+                                                 appearance('Shadowless', dict(melly, torso='#d8283f'), '>:)', []),
+                                                 appearance('Alt', alt['colors'], alt['face'], alt['accessories'])]},
             spike, censor()]},
         {'c': 'StarterGui', 'n': 'StarterGui', 'k': [
             {'c': 'ScreenGui', 'n': 'Hud', 'k': [{'c': 'LocalScript', 'n': 'Client', 'p': {'Source': src('Client.luau')}}]}]},
         {'c': 'StarterPlayer', 'n': 'StarterPlayer', 'p': {
             'WalkSpeed': 5, 'SprintSpeed': 7, 'MaxStamina': 100, 'RespawnTime': 4, 'EmotesEnabled': True, 'CameraMaxZoom': 16,
+            'PlayerSyncRange': 70,
             'AntiCheat': True},
          'k': [{'c': 'StarterPlayerScripts', 'n': 'StarterPlayerScripts', 'k': [
              {'c': 'LocalScript', 'n': 'Ambience', 'p': {'Source': src('Ambience.luau')}}]}]},

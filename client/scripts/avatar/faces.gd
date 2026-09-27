@@ -6,7 +6,7 @@ extends RefCounted
 const LIST := [
 	[":D", "grin"], [":)", "smile"], [":3", "cat"], [":P", "tongue"], [";)", "wink"], [":O", "wow"],
 	["xD", "xd"], ["B)", "cool"], ["^_^", "happy"], ["owo", "owo"], ["uwu", "uwu"], [">_<", "squint"],
-	["T_T", "cry"], ["-_-", "meh"], [":|", "flat"], ["<3", "love"],
+	["T_T", "cry"], ["-_-", "meh"], [":|", "flat"], ["<3", "love"], [">:)", "evil"],
 ]
 ## Shown on a ragdoll, not selectable.
 const SAD := ":("

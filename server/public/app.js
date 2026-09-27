@@ -35,7 +35,7 @@ const T = {
     cm_create: 'Create', cm_create_for: 'Create for {0}', cm_name: 'Name', cm_desc: 'What is it about?', cm_price: 'A community costs 10 pieces or 100 orbs. You will be its owner.',
     cm_join: 'Join', cm_leave: 'Leave', cm_leave_q: 'Leave the community?', cm_banned: 'You are banned here', cm_channels: 'Channels', cm_people: 'Members', cm_places: 'Places',
     cm_write: 'Message #{0}', cm_join_to_write: 'Join to write here', cm_cant_write: "Your role can't write in this channel", cm_no_messages: 'No messages yet. Say hi!',
-    cm_no_places: 'No places yet', cm_by: 'by {0}', cm_manage_app: 'Roles, channels and settings are in the app: Communities tab.', cm_created: 'Community created!',
+    cm_no_places: 'No places yet', cm_by: 'by {0}', cm_bank: 'Bank', cm_bank_about: "Gamepass sales in the community's places land here. The owner pays members out.", cm_bank_pay: 'Pay out', cm_bank_history: 'History', cm_bank_empty: 'Nothing yet', cm_bank_sale: 'Gamepass sale', cm_bank_to: 'To {0}', cm_bank_paid: 'Paid out', cm_manage_app: 'Roles, channels and settings are in the app: Communities tab.', cm_created: 'Community created!',
     role_Owner: 'Owner', role_Admin: 'Admin', role_Builder: 'Builder', role_Member: 'Member', communities_of: 'Communities',
     home: 'Home', friends: 'Friends', download: 'Download', settings: 'Settings',
     sign_in: 'Sign in', sign_up: 'Sign up', sign_out: 'Sign out',
@@ -118,7 +118,7 @@ const T = {
     cm_create: 'Создать', cm_create_for: 'Создать за {0}', cm_name: 'Название', cm_desc: 'О чём оно?', cm_price: 'Сообщество стоит 10 кусочков или 100 опыта. Ты станешь его владельцем.',
     cm_join: 'Вступить', cm_leave: 'Выйти', cm_leave_q: 'Выйти из сообщества?', cm_banned: 'Ты тут забанен', cm_channels: 'Каналы', cm_people: 'Участники', cm_places: 'Плейсы',
     cm_write: 'Написать в #{0}', cm_join_to_write: 'Вступи, чтобы писать', cm_cant_write: 'Твоей роли нельзя писать в этот канал', cm_no_messages: 'Сообщений пока нет. Поздоровайся!',
-    cm_no_places: 'Плейсов пока нет', cm_by: 'создатель {0}', cm_manage_app: 'Роли, каналы и настройки: в приложении, вкладка «Сообщества».', cm_created: 'Сообщество создано!',
+    cm_no_places: 'Плейсов пока нет', cm_by: 'создатель {0}', cm_bank: 'Банк', cm_bank_about: 'Сюда приходят продажи геймпассов в плейсах сообщества. Владелец выплачивает их участникам.', cm_bank_pay: 'Выплатить', cm_bank_history: 'История', cm_bank_empty: 'Пока пусто', cm_bank_sale: 'Продажа геймпасса', cm_bank_to: 'Игроку {0}', cm_bank_paid: 'Выплачено', cm_manage_app: 'Роли, каналы и настройки: в приложении, вкладка «Сообщества».', cm_created: 'Сообщество создано!',
     role_Owner: 'Владелец', role_Admin: 'Админ', role_Builder: 'Строитель', role_Member: 'Участник', communities_of: 'Сообщества',
     home: 'Главная', friends: 'Друзья', download: 'Скачать', settings: 'Настройки',
     sign_in: 'Войти', sign_up: 'Регистрация', sign_out: 'Выйти',
@@ -393,7 +393,7 @@ const onLeave = (fn) => cleanups.push(fn);
 const pages = {
   async '/'(root) {
     if (!state.me) return landing(root);
-    root.innerHTML = `<h1>${esc(t('hi', state.me.display_name))}</h1>${balanceCards(state.me.wallet)}<div id="fo"></div>
+    root.innerHTML = `<h1>${esc(t('hi', state.me.display_name))}</h1><div id="fo"></div>
       <div class="row section-head"><h2 class="grow">${t('places')}</h2>
         <input id="pq" class="search" type="search" placeholder="${t('search_everything')}" autocomplete="off"></div>
       <div id="people"></div>
@@ -585,7 +585,7 @@ function authPage(root, mode) {
 function userRow(u, actions = '') {
   return `<div class="card row user-row">${bust(u)}
     <div class="grow"><a href="/u/${encodeURIComponent(u.username)}" data-link><b>${nameHtml(u)}</b> <span class="muted">@${esc(u.username)}</span></a><div style="margin-top:6px">${status(u)}</div></div>
-    ${u.playing ? `<button class="btn small mint" data-play="${esc(u.playing.server_id)}">${t('join')}</button>` : ''}
+    ${u.playing ? `<button class="btn small mint" data-play="${esc(u.playing.server_id)}" data-game="${esc(u.playing.game)}">${t('join')}</button>` : ''}
     ${actions || `<a class="btn small ghost" href="/u/${encodeURIComponent(u.username)}" data-link>›</a>`}</div>`;
 }
 
@@ -613,7 +613,7 @@ async function profilePage(root, username) {
       <div style="margin-top:12px">${status(u)}</div>
       <p>${u.bio ? esc(u.bio) : `<span class="muted">${t('no_bio')}</span>`}</p>
       <div class="stats"><div><b>${u.friends}</b><span class="muted">${t('friends_count')}</span></div><div><b>${joined}</b><span class="muted">${t('member_since')}</span></div></div>
-      <div class="row" style="flex-wrap:wrap">${u.playing && !me ? `<button class="btn mint" data-play="${esc(u.playing.server_id)}">${t('join')}</button>` : ''}${friendBtn}${msgBtn}</div>
+      <div class="row" style="flex-wrap:wrap">${u.playing && !me ? `<button class="btn mint" data-play="${esc(u.playing.server_id)}" data-game="${esc(u.playing.game)}">${t('join')}</button>` : ''}${friendBtn}${msgBtn}</div>
       ${more}
       ${me ? `<p class="muted">${t('edit_in_app')}</p>` : ''}
     </div></div>
@@ -677,7 +677,7 @@ function reportDialog(u, about = {}) {
 
 const FACE_SLUGS = {
   ':D': 'grin', ':)': 'smile', ':3': 'cat', ':P': 'tongue', ';)': 'wink', ':O': 'wow', xD: 'xd', 'B)': 'cool',
-  '^_^': 'happy', owo: 'owo', uwu: 'uwu', '>_<': 'squint', 'T_T': 'cry', '-_-': 'meh', ':|': 'flat', '<3': 'love',
+  '^_^': 'happy', owo: 'owo', uwu: 'uwu', '>_<': 'squint', 'T_T': 'cry', '-_-': 'meh', ':|': 'flat', '<3': 'love', '>:)': 'evil',
 };
 const BODY_PARTS = ['torso', 'head', 'arm_l', 'arm_r', 'leg_l', 'leg_r'];
 const DEFAULT_COLORS = { torso: '#baa4e2', head: '#f5f1ec', arm_l: '#f5f1ec', arm_r: '#f5f1ec', leg_l: '#302d38', leg_r: '#302d38' };
@@ -1045,7 +1045,7 @@ function friendChip(f) {
   const ring = f.playing ? 'play' : f.online ? 'on' : '';
   const inner = `<span class="ring ${ring}">${bust(f)}</span><b>${esc(f.display_name)}</b>`;
   return f.playing
-    ? `<button class="chip" data-play="${esc(f.playing.server_id)}">${inner}<small>${t('join')}</small></button>`
+    ? `<button class="chip" data-play="${esc(f.playing.server_id)}" data-game="${esc(f.playing.game)}">${inner}<small>${t('join')}</small></button>`
     : `<a class="chip" href="/u/${encodeURIComponent(f.username)}" data-link>${inner}</a>`;
 }
 
@@ -1103,7 +1103,7 @@ async function communityPage(root, id) {
       <span class="muted">${esc(t('cm_members', c.members))}${c.owner ? ' · ' + esc(t('cm_by', c.owner.display_name)) : ''}</span></div>
       ${me ? (me.rank < 255 ? `<button class="btn ghost" id="cmleave">${t('cm_leave')}</button>` : '') : c.banned ? `<b class="danger">${t('cm_banned')}</b>` : `<button class="btn mint" id="cmjoin">${t('cm_join')}</button>`}</div>
     ${c.description ? `<p class="muted">${esc(c.description)}</p>` : ''}
-    <div class="tabs" id="cmtabs"><button class="on" data-t="channels">${t('cm_channels')}</button><button data-t="members">${t('cm_people')}</button><button data-t="places">${t('cm_places')}</button></div>
+    <div class="tabs" id="cmtabs"><button class="on" data-t="channels">${t('cm_channels')}</button><button data-t="members">${t('cm_people')}</button><button data-t="places">${t('cm_places')}</button>${me ? `<button data-t="bank">${t('cm_bank')}</button>` : ''}</div>
     <div id="cmbody"></div>${perms.has('manage') ? `<p class="muted">${t('cm_manage_app')}</p>` : ''}`;
   $('#cmjoin')?.addEventListener('click', async () => { try { await api('POST', `/api/communities/${id}/join`); render(); } catch (e) { toast(e.message, 'error'); } });
   $('#cmleave')?.addEventListener('click', async () => { if (confirm(t('cm_leave_q'))) { await api('POST', `/api/communities/${id}/leave`); render(); } });
@@ -1153,6 +1153,30 @@ async function communityPage(root, id) {
       const roles = Object.fromEntries(c.roles.map((r) => [r.id, r]));
       body.innerHTML = `<div class="stack">${members.map((m) => `<a class="card row" href="/u/${encodeURIComponent(m.username)}" data-link>${bust(m, 'small')}
         <div class="grow"><b>${nameHtml(m)}</b><div class="muted">@${esc(m.username)}</div></div><b class="${(roles[m.role_id]?.rank || 0) >= 200 ? 'accent' : 'muted'}">${esc(roleName(roles[m.role_id]?.name || ''))}</b></a>`).join('')}</div>`;
+    } else if (tab === 'bank') {
+      // The balance and history; the owner (or a role with "bank") pays members, one or several at once.
+      body.innerHTML = '<div class="loader"><i></i></div>';
+      const bank = await api('GET', `/api/communities/${id}/bank`);
+      const members = bank.can_pay && bank.bank > 0 ? (await api('GET', `/api/communities/${id}/members`)).members : [];
+      body.innerHTML = `<div class="card row" style="margin-top:12px">${PIECE_SVG(36)}<div class="grow"><b style="font-size:30px">${bank.bank}</b><div class="muted">${esc(t('cm_bank_about'))}</div></div></div>
+        ${members.length ? `<form class="stack" id="cmpay" style="margin-top:12px">${members.map((m) => `<div class="card row">${bust(m, 'small')}<div class="grow"><b>${nameHtml(m)}</b></div>
+          <input type="number" min="0" max="${bank.bank}" step="1" value="0" name="u${m.id}" data-uid="${m.id}" style="width:110px"></div>`).join('')}
+          <button class="btn" style="align-self:flex-start">${t('cm_bank_pay')}</button></form>` : ''}
+        <h3>${t('cm_bank_history')}</h3>
+        ${bank.log.length ? `<div class="stack">${bank.log.map((e) => `<div class="card row"><span class="grow">${esc(e.reason === 'gamepass_sale' ? t('cm_bank_sale') : t('cm_bank_to', e.user?.display_name || '?'))}</span>
+          <b class="${e.delta > 0 ? 'mint' : 'danger'}">${e.delta > 0 ? '+' : ''}${e.delta}</b></div>`).join('')}</div>` : `<div class="empty">${t('cm_bank_empty')}</div>`}`;
+      $('#cmpay')?.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const payouts = [...e.target.querySelectorAll('[data-uid]')].map((i) => ({ user_id: Number(i.dataset.uid), amount: Math.floor(Number(i.value) || 0) })).filter((p) => p.amount > 0);
+        if (!payouts.length) return;
+        try {
+          const r = await api('POST', `/api/communities/${id}/bank/pay`, { payouts });
+          if (state.me && r.wallet) state.me.wallet = r.wallet;
+          toast(t('cm_bank_paid'));
+          renderNav(location.pathname);
+          draw();
+        } catch (err) { toast(err.message, 'error'); }
+      });
     } else {
       body.innerHTML = '<div class="loader"><i></i></div>';
       const { places } = await api('GET', `/api/communities/${id}/places`);

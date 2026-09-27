@@ -124,3 +124,80 @@ test('a server teleport the client never follows puts them there without points'
   assert.deepEqual(r.back, [0, 3.5, 520]);
   assert.equal(g.points, 0);
 });
+
+test('a Glide from the place goes through, a flight of your own does not', () => {
+  const g = new MoveGuard([0, 0.6, 0], 0);
+  let r = run(g, [0, 0.6, 0], [0, 0, 5], 2000, 0);
+  // Up 14 studs in a second, then 40 studs across in one more: far beyond walking and jumping.
+  g.glideTo(r.p, [r.p[0], 14.6, r.p[2]], 1000, r.t);
+  r = run(g, r.p, [0, 14, 0], 1000, r.t);
+  assert.deepEqual(r.bad, []);
+  // Hanging there (Humanoid.Floating) is fine too.
+  r = run(g, r.p, [0, 0, 0], 2000, r.t);
+  assert.deepEqual(r.bad, []);
+  g.glideTo(r.p, [r.p[0] + 40, 3, r.p[2]], 1000, r.t);
+  r = run(g, r.p, [40, -11.6, 0], 1000, r.t);
+  assert.deepEqual(r.bad, []);
+  // Long after the trip, flying up again on your own is caught.
+  r = run(g, r.p, [0, 0, 0], 3000, r.t);
+  r = run(g, r.p, [0, 14, 0], 2000, r.t);
+  assert.ok(r.bad.length > 0);
+});
+
+// A Studio place: the server knows what's under the player (grounded / floating / climb).
+const S = { walk: 5, sprint: 7, jump: 8.2, gravity: 22, rise: 7, check: true };
+
+// Jumps or falls with real gravity from `from` (vy up), sending updates at 20 Hz.
+function arc(guard, from, vy, ms, t0, ground = 0, extra = {}) {
+  let p = from.slice();
+  let v = vy;
+  let t = t0;
+  const bad = [];
+  for (let k = 0; k < ms / STEP; k++) {
+    t += STEP;
+    v = Math.max(v - (S.gravity * STEP) / 1000, -50);
+    p = [p[0] + 0.2, Math.max(ground, p[1] + (v * STEP) / 1000), p[2]];
+    const grounded = p[1] <= ground + 0.01;
+    const r = guard.check(p, { ...S, grounded, floating: false, climb: false, ...extra }, t);
+    if (r && !r.silent) bad.push(r.reason);
+  }
+  return { p, t, bad };
+}
+
+test('in the air: a real jump and a long fall pass, jumping off nothing and hanging are flying', () => {
+  const g = new MoveGuard([0, 0, 0], 0);
+  let r = arc(g, [0, 0, 0], 8.2, 3000, 2000);
+  assert.deepEqual(r.bad, []);
+  // Off a 60-stud cliff (put up there by the place first).
+  g.reset([r.p[0], 60, 0], r.t);
+  r = arc(g, [r.p[0], 60, 0], 0, 4000, r.t);
+  assert.deepEqual(r.bad, []);
+  // A second jump at the top of the first, with nothing underfoot.
+  const f = new MoveGuard([0, 0, 0], 0);
+  r = arc(f, [0, 0, 0], 8.2, 380, 2000);
+  const flights = [];
+  for (let k = 0; k < 4; k++) {
+    r = arc(f, r.p, 8.2, 380, r.t);
+    flights.push(...r.bad);
+  }
+  assert.ok(flights.includes('fly'), JSON.stringify(flights));
+  // Hanging 5 studs up.
+  const h = new MoveGuard([0, 0, 0], 0);
+  r = arc(h, [0, 0, 0], 8.2, 400, 2000);
+  let t = r.t;
+  const bad = [];
+  for (let k = 0; k < 60; k++) {
+    t += STEP;
+    const x = h.check([0, 1.5, 0], { ...S, grounded: false }, t);
+    if (x && !x.silent) bad.push(x.reason);
+  }
+  assert.ok(bad.includes('fly'));
+  // The same hanging with Humanoid.Floating (the place's doing) is fine.
+  const fl = new MoveGuard([0, 1.5, 0], 0);
+  const ok = [];
+  for (let k = 0; k < 60; k++) {
+    const x = fl.check([0, 1.5, 0], { ...S, grounded: false, floating: true }, 2000 + k * STEP);
+    if (x && !x.silent) ok.push(x.reason);
+  }
+  assert.deepEqual(ok, []);
+});

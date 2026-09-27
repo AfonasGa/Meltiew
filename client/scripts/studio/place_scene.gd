@@ -60,6 +60,8 @@ var _env: Environment
 var _sky_mat: ShaderMaterial
 var _quality := "high"
 var _noise := {}
+var highlights := PlaceHighlights.new(self)
+var effects: PlaceEffects
 
 
 func _ready() -> void:
@@ -85,6 +87,9 @@ func _ready() -> void:
 
 func bind(t: PlaceTree) -> void:
 	tree = t
+	effects = PlaceEffects.new()
+	add_child(effects)
+	effects.setup(self)
 	tree.added.connect(_on_added)
 	tree.removed.connect(_on_removed)
 	tree.changed.connect(_on_changed)
@@ -114,6 +119,32 @@ func mesh_of(id: String) -> MeshInstance3D:
 	return _parts.get(id, {}).get("mesh")
 
 
+## A Rig's or Humanoid's *Angle properties as { bone: Vector3 degrees } for its Melly.
+func joint_angles_of(id: String) -> Dictionary:
+	var out := {}
+	for prop in MellyAvatar.JOINT_PROPS:
+		var v: Variant = tree.prop(id, prop)
+		if v is Vector3:
+			out[MellyAvatar.JOINT_PROPS[prop]] = v
+	return out
+
+
+## The Melly drawn for a Rig or a player's character Model (null for anything else).
+func avatar_for(id: String) -> Node:
+	if _rigs.has(id):
+		return _rigs[id].avatar
+	if _is_character(id) and avatar_of.is_valid():
+		return avatar_of.call(id)
+	return null
+
+
+## Parts under `id` are drawn merged or on their own again (a Highlight came or went).
+func _rebatch_under(id: String) -> void:
+	for p in [id] + Array(tree.descendants(id)):
+		if _parts.has(p):
+			_batch(p)
+
+
 ## Which instance a physics body belongs to ("" if none).
 static func id_of(obj: Object) -> String:
 	if obj and obj.has_meta("place_id"):
@@ -139,6 +170,9 @@ func _on_added(id: String) -> void:
 
 func _on_removed(id: String, _parent: String) -> void:
 	stop_sound(id)
+	# A Highlight gone: what it covered may be drawn merged again.
+	if highlights.remove(id) and tree.has(_parent):
+		_rebatch_under(_parent)
 	_destroy(id)
 	_pmesh_data.erase(id)
 	if tree.cls(id) == "" and (_is_sky_class(id)):
@@ -177,6 +211,10 @@ func _on_changed(id: String, key: String) -> void:
 		_style_rig(id, key)
 	elif _lights.has(id):
 		_style_light(id)
+	elif c == "Highlight":
+		highlights.restyle(id)
+	elif effects and effects.has(id):
+		effects.restyle(id)
 	elif _sounds.has(id):
 		if key == "Volume" or key == "Pitch":
 			_style_sound(id, _sounds[id])
@@ -212,6 +250,11 @@ func _build(id: String) -> void:
 		_build_rig(id)
 	elif c == "PointLight":
 		_build_light(id)
+	elif c == "Highlight":
+		highlights.add(id)
+		_rebatch_under(tree.parent_of(id))
+	elif c == "ParticleEmitter" or c == "Trail":
+		effects.add(id)
 	elif c == "ClickDetector":
 		var body := body_of(tree.parent_of(id))
 		if body:
@@ -245,6 +288,9 @@ func _destroy(id: String) -> void:
 		if is_instance_valid(_lights[id]):
 			_lights[id].queue_free()
 		_lights.erase(id)
+	highlights.remove(id)
+	if effects:
+		effects.remove(id)
 
 
 func _transform_of(id: String) -> Transform3D:
@@ -355,6 +401,8 @@ func _teleport(body: Node3D, t: Transform3D) -> void:
 
 
 func _process(_delta: float) -> void:
+	if highlights.has_any():
+		highlights.process(_delta)
 	if not _held.is_empty() or not _holding.is_empty():
 		_follow_hands()
 	if not _worn_texts.is_empty():
@@ -585,7 +633,7 @@ func _batch(id: String) -> void:
 	var kind := str(tree.prop(id, "Material"))
 	var ok: bool = e.body is AnimatableBody3D and not _held.has(id) and not _dynamic.has(id) \
 		and float(tree.prop(id, "Transparency")) < 0.001 and str(tree.prop(id, "Texture")) == "" \
-		and PartBatcher.batchable_kind(kind) and tree.cls(id) != "SpawnLocation"
+		and PartBatcher.batchable_kind(kind) and tree.cls(id) != "SpawnLocation" and not highlights.covers_part(id)
 	if not ok:
 		if _batcher and _batcher.has(id):
 			_batcher.remove(id)
@@ -794,6 +842,10 @@ func _style_rig(id: String, key: String) -> void:
 	body.global_transform = Transform3D(Basis(Vector3.UP, t.basis.get_euler().y), t.origin)
 	if key == "Position" or key == "Rotation":
 		return
+	av.set_joint_angles(joint_angles_of(id))
+	# Scripts turn joints every frame: nothing else to redo for those.
+	if key.ends_with("Angle"):
+		return
 	var colors := {}
 	for pair in [["head", "HeadColor"], ["torso", "TorsoColor"], ["arm_l", "LeftArmColor"], ["arm_r", "RightArmColor"], ["leg_l", "LeftLegColor"], ["leg_r", "RightLegColor"]]:
 		var c: Variant = tree.prop(id, pair[1])
@@ -808,7 +860,7 @@ func _style_rig(id: String, key: String) -> void:
 	var visible_now: bool = tree.prop(id, "Visible") != false
 	av.visible = visible_now
 	var name := str(tree.prop(id, "DisplayName"))
-	r.tag.text = localize(name)
+	r.tag.text = UI.tame(localize(name))
 	r.tag.visible = visible_now and name != ""
 	body.collision_layer = LAYER_WORLD if tree.prop(id, "CanCollide") != false or editing else LAYER_GHOST
 	if key == "" or key == "Animation" or key == "AnimationSpeed":
@@ -843,7 +895,7 @@ func _style_text(id: String) -> void:
 	else:
 		_worn_texts.erase(id)
 		l.global_transform = _transform_of(id)
-	l.text = localize(str(tree.prop(id, "Text")))
+	l.text = UI.tame(localize(str(tree.prop(id, "Text"))))
 	l.modulate = tree.prop(id, "TextColor")
 	l.outline_modulate = tree.prop(id, "OutlineColor")
 	l.font_size = int(tree.prop(id, "TextSize"))

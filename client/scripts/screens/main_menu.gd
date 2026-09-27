@@ -4,7 +4,6 @@ extends Control
 const PAGES := [
 	{"id": "home", "title": "nav_home", "icon": "home"},
 	{"id": "friends", "title": "nav_friends", "icon": "friends"},
-	{"id": "messages", "title": "messages", "icon": "chat"},
 	{"id": "communities", "title": "nav_communities", "icon": "group"},
 	{"id": "avatar", "title": "nav_avatar", "icon": "avatar"},
 	{"id": "shop", "title": "nav_shop", "icon": "shop"},
@@ -25,10 +24,12 @@ var _badges := {}
 var _side: PanelContainer
 var _brand_label: Label
 var _nav_labels: Array[Label] = []
-var _tg: Button
 var _me_col: Control
 var _compact := false
 var _dm_user: Dictionary = {}
+## Counts shown on Friends in the sidebar and on its Friends / Messages switch.
+var _friend_count := 0
+var _dm_count := 0
 var _me_box: HBoxContainer
 var _poll: Timer
 var _side_box: VBoxContainer
@@ -187,7 +188,7 @@ func _build_sidebar() -> Control:
 		l.size_flags_vertical = Control.SIZE_FILL
 		inner.add_child(l)
 		_nav_labels.append(l)
-		if p.id == "friends" or p.id == "messages":
+		if p.id == "friends":
 			# Floats over the button so it can sit beside the label or on the icon's corner.
 			var nav_badge := UI.label("", 15, UI.INK, "black")
 			_badges[p.id] = nav_badge
@@ -209,17 +210,8 @@ func _build_sidebar() -> Control:
 		_nav_buttons[p.id] = b
 		_nav_icons[p.id] = [ic, l]
 
+	# The Telegram channel lives in Settings: the sidebar has to fit small phones.
 	v.add_child(UI.spacer(false))
-	var tg := UI.button("", "flat", 40)
-	_tg = tg
-	tg.alignment = HORIZONTAL_ALIGNMENT_LEFT
-	tg.add_theme_font_size_override("font_size", 15)
-	tg.tooltip_text = L.t("telegram")
-	var tg_icon := Icon.make("send", 20, UI.ACCENT)
-	tg_icon.name = "Icon"
-	tg.add_child(tg_icon)
-	tg.pressed.connect(func(): OS.shell_open(UI.TELEGRAM))
-	v.add_child(tg)
 	var me_card := UI.card(12, UI.CARD, 18)
 	_me_box = UI.hbox(12)
 	me_card.add_child(_me_box)
@@ -254,11 +246,14 @@ func _apply_compact() -> void:
 	var compact := vp_size.x < 1120.0
 	# Short screens (wide phones in landscape) get tighter rows, whatever the width.
 	var short := vp_size.y < 760.0
+	# Tiny phones in landscape: smaller rows and no logo, so all of it fits without scrolling.
+	var tiny := vp_size.y < 560.0
 	_compact = compact
 	for id in _nav_buttons:
-		_nav_buttons[id].custom_minimum_size.y = 46 if short else 56
+		_nav_buttons[id].custom_minimum_size.y = 40 if tiny else (46 if short else 56)
+	_brand_label.get_parent().visible = not tiny
 	_side_box.add_theme_constant_override("separation", 4 if short else 8)
-	_side_gap.custom_minimum_size.y = 4 if short else 18
+	_side_gap.custom_minimum_size.y = 0 if tiny else (4 if short else 18)
 	sb_top_bottom(short)
 	_side.custom_minimum_size.x = 92 if compact else 232
 	var sb := _side.get_theme_stylebox("panel") as StyleBoxFlat
@@ -267,8 +262,6 @@ func _apply_compact() -> void:
 	_brand_label.visible = not compact
 	for l in _nav_labels:
 		l.visible = not compact
-	_tg.text = "" if compact else "        " + L.t("telegram")
-	(_tg.get_node("Icon") as Control).position = Vector2(24 if compact else 16, 10)
 	for id in _badges:
 		var nb: Label = _badges[id]
 		nb.add_theme_font_size_override("font_size", 13 if compact else 15)
@@ -311,6 +304,8 @@ func open_place(id: String) -> void:
 
 
 func _highlight(id: String) -> void:
+	if id == "messages":
+		id = "friends"
 	for pid in _nav_buttons:
 		var on: bool = pid == id
 		_nav_buttons[pid].button_pressed = on
@@ -374,7 +369,27 @@ func open_page(id: String) -> void:
 
 
 func set_request_badge(n: int) -> void:
-	_set_badge("friends", n)
+	_friend_count = n
+	_set_badge("friends", _friend_count + _dm_count)
+
+
+## Friends and Messages share one place in the sidebar: this switch sits on top of both.
+func section_switch(current: String) -> Control:
+	var row := UI.hbox(8)
+	for s in [["friends", L.t("nav_friends"), _friend_count], ["messages", L.t("messages"), _dm_count]]:
+		var b := UI.button(s[1] + ("  " + str(s[2]) if s[2] > 0 else ""), "flat", 46)
+		b.theme_type_variation = "ChipButton"
+		b.toggle_mode = true
+		b.button_pressed = s[0] == current
+		b.add_theme_font_size_override("font_size", 18)
+		b.pressed.connect(func():
+			if s[0] == current:
+				b.button_pressed = true
+			else:
+				Sfx.click()
+				open_page(s[0]))
+		row.add_child(b)
+	return row
 
 
 func _set_badge(id: String, n: int) -> void:
@@ -387,8 +402,9 @@ func _set_badge(id: String, n: int) -> void:
 func _poll_requests() -> void:
 	var r := await Api.request("GET", "/api/notifications")
 	if r.ok and is_instance_valid(self):
-		_set_badge("friends", int(r.data.friend_requests))
-		_set_badge("messages", int(r.data.dm_unread) + int(r.data.dm_requests))
+		_friend_count = int(r.data.friend_requests)
+		_dm_count = int(r.data.dm_unread) + int(r.data.dm_requests)
+		_set_badge("friends", _friend_count + _dm_count)
 
 
 ## Opens Messages with a conversation to this user (from a profile).

@@ -20,6 +20,10 @@ static func fetch(ref: String, done: Callable) -> void:
 	if ref == "":
 		done.call(null)
 		return
+	# Drawn by a script (DynamicImage): always the same texture, kept up to date.
+	if ref.begins_with("dynimg://"):
+		done.call(DynImages.texture(ref.trim_prefix("dynimg://")))
+		return
 	if _textures.has(ref):
 		done.call(_textures[ref])
 		return

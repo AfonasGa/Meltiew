@@ -67,3 +67,12 @@ export function filterText(text) {
 export function hasProfanity(text) {
   return filterText(text) !== String(text);
 }
+
+// "Zalgo" text: hundreds of combining marks stacked on one letter. The app's text
+// shaping hangs on it (a comment like that froze everyone who opened the page), so
+// runs of marks are cut to 3: enough for any real language, too few to hurt.
+const MARK_RUNS = /(\p{M}{3})\p{M}+/gu;
+
+export function tameMarks(text) {
+  return String(text ?? '').replace(MARK_RUNS, '$1');
+}

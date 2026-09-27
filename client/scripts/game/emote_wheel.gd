@@ -1,12 +1,12 @@
 class_name EmoteWheel
 extends Control
-## Radial emote picker: wave, hearts, dance, cheer, sit, clap, laugh.
+## Radial emote picker: wave, hearts, dance, cheer, sit, hug, laugh.
 
 signal picked(emote: String)
 
 const ITEMS := [
 	["wave", "hand"], ["heart", "heart"], ["dance", "music"], ["cheer", "star"],
-	["sit", "chair"], ["clap", "clap"], ["laugh", "smile"],
+	["sit", "chair"], ["hug", "users"], ["laugh", "smile"],
 ]
 const RADIUS := 150.0
 const BTN := 92.0

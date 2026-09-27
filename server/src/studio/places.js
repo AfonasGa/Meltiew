@@ -1,4 +1,5 @@
 // Studio places on disk and in the database: .melt files, covers, access rules and stats.
+import { tameMarks } from '../filter.js';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -91,7 +92,7 @@ function cleanNode(node, depth, counter) {
 export function cleanI18n(obj) {
   const out = {};
   for (const [lang, text] of Object.entries(obj || {})) {
-    if (/^[a-z]{2,3}(-[A-Za-z]{2,4})?$/.test(lang) && typeof text === 'string') out[lang] = text.slice(0, 2000);
+    if (/^[a-z]{2,3}(-[A-Za-z]{2,4})?$/.test(lang) && typeof text === 'string') out[lang] = tameMarks(text).slice(0, 2000);
   }
   return out;
 }
@@ -113,8 +114,8 @@ export function validateMelt(melt) {
     format: MELT_FORMAT,
     version: MELT_VERSION,
     meta: {
-      name: String(meta.name || 'Untitled').slice(0, 60),
-      description: String(meta.description || '').slice(0, 1000),
+      name: tameMarks(meta.name || 'Untitled').slice(0, 60),
+      description: tameMarks(meta.description || '').slice(0, 1000),
       i18n: { name: cleanI18n(meta.i18n?.name), description: cleanI18n(meta.i18n?.description) },
     },
     strings,

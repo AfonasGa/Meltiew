@@ -197,8 +197,12 @@ func _build_top_bar() -> Control:
 	sb.border_width_bottom = 1
 	sb.border_color = UI.LINE
 	bar.add_theme_stylebox_override("panel", sb)
+	# Phones: the tools, snap and UI go on a second row (one row ran off the screen).
+	var narrow := get_viewport_rect().size.x < 1100.0
+	var rows := UI.vbox(6)
+	bar.add_child(rows)
 	var h := UI.hbox(6)
-	bar.add_child(h)
+	rows.add_child(h)
 	# Menus and tools scroll sideways on narrow screens; Test/Publish/Save stay put.
 	var strip := ScrollContainer.new()
 	strip.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -213,9 +217,10 @@ func _build_top_bar() -> Control:
 	mark.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	mark.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	left.add_child(mark)
-	left.add_child(UI.label("studio", 18, UI.ACCENT, "black"))
+	if not narrow:
+		left.add_child(UI.label("studio", 18, UI.ACCENT, "black"))
 	_title = UI.label("", 16, UI.TEXT, "bold")
-	_title.custom_minimum_size.x = 140
+	_title.custom_minimum_size.x = 90 if narrow else 140
 	_title.clip_text = true
 	left.add_child(_title)
 
@@ -245,7 +250,16 @@ func _build_top_bar() -> Control:
 		[L.t("st_strings"), func(): strings_ed.open()],
 		[L.t("st_settings"), _open_settings],
 	]))
-	left.add_child(VSeparator.new())
+	var tools := UI.hbox(6)
+	if narrow:
+		var tools_strip := ScrollContainer.new()
+		tools_strip.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+		tools_strip.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_SHOW_NEVER
+		tools_strip.add_child(tools)
+		rows.add_child(tools_strip)
+	else:
+		left.add_child(VSeparator.new())
+		left.add_child(tools)
 	for t in [["select", "pointer", "1"], ["move", "move", "2"], ["scale", "scale", "3"], ["rotate", "rotate", "4"]]:
 		var b := UI.button(L.t("st_tool_" + t[0]), "flat", 34)
 		b.theme_type_variation = "ChipButton"
@@ -253,7 +267,7 @@ func _build_top_bar() -> Control:
 		b.add_theme_font_size_override("font_size", 14)
 		b.tooltip_text = L.t("st_tool_" + t[0]) + " (" + t[2] + ")"
 		b.pressed.connect(func(): _set_tool(t[0]))
-		left.add_child(b)
+		tools.add_child(b)
 		_tool_buttons[t[0]] = b
 	var snap := OptionButton.new()
 	for i in SNAPS.size():
@@ -263,14 +277,14 @@ func _build_top_bar() -> Control:
 		view.snap = SNAPS[i] > 0.0
 		view.move_snap = SNAPS[i])
 	snap.add_theme_font_size_override("font_size", 14)
-	left.add_child(snap)
+	tools.add_child(snap)
 	_ui_button = UI.button("UI", "flat", 34)
 	_ui_button.theme_type_variation = "ChipButton"
 	_ui_button.toggle_mode = true
 	_ui_button.tooltip_text = L.t("st_ui_mode")
 	_ui_button.add_theme_font_size_override("font_size", 14)
 	_ui_button.toggled.connect(func(on): gui_layer.visible = on)
-	left.add_child(_ui_button)
+	tools.add_child(_ui_button)
 	var test := UI.button("▶ " + L.t("st_test"), "mint", 36)
 	test.add_theme_font_size_override("font_size", 15)
 	test.pressed.connect(play_test)

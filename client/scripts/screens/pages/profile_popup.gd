@@ -136,7 +136,7 @@ func _render(u: Dictionary) -> void:
 		join.pressed.connect(func():
 			_close()
 			if menu and menu.has_method("play"):
-				menu.play(str(playing.server_id)))
+				menu.play(str(playing.server_id), str(playing.get("game", "playground"))))
 		actions.add_child(join)
 	if is_me:
 		return

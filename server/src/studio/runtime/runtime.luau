@@ -499,11 +499,15 @@ local function emit(op)
 end
 
 local flushMeshes -- forward: ProceduralMesh changes go out once per call
+local flushImages -- forward: DynamicImage pixels go out once per call
 local meshFullOp -- forward
 
 local function flush()
 	if flushMeshes then
 		flushMeshes()
+	end
+	if flushImages then
+		flushImages()
 	end
 	local out = ops
 	ops = {}
@@ -2676,6 +2680,7 @@ end
 ---------------------------------------------------------------------------
 local playersByUser = {} -- userId -> Player
 local respawnAt = {} -- Player -> sim time
+local lastHeard = {} -- Player -> sim time their app last reported where they are (server)
 
 local function starterValue(key)
 	local sp = services.StarterPlayer
@@ -2852,6 +2857,155 @@ Methods.Humanoid = {
 	end,
 }
 
+-- DynamicImage: pixels drawn by scripts (up to 128x128), used anywhere an image goes
+-- through img:GetContent(). The pixels live in a buffer here; what changed in a call
+-- goes out once, as Data (base64 RGBA), for every app to turn into a texture.
+local dirtyImages = {}
+local B64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+
+local function base64(s)
+	local out = table.create(math.ceil(#s / 3))
+	for i = 1, #s, 3 do
+		local a, b, c = string.byte(s, i, i + 2)
+		local n = a * 65536 + (b or 0) * 256 + (c or 0)
+		local c1 = bit32.extract(n, 18, 6) + 1
+		local c2 = bit32.extract(n, 12, 6) + 1
+		local c3_ = bit32.extract(n, 6, 6) + 1
+		local c4 = bit32.extract(n, 0, 6) + 1
+		out[#out + 1] = string.sub(B64, c1, c1) .. string.sub(B64, c2, c2)
+			.. (b and string.sub(B64, c3_, c3_) or "=") .. (c and string.sub(B64, c4, c4) or "=")
+	end
+	return table.concat(out)
+end
+
+local function imageBuffer(img)
+	local d = D[img]
+	local w, h = math.floor(d.props.Width), math.floor(d.props.Height)
+	local e = d.extra or {}
+	d.extra = e
+	if not e.buf or e.w ~= w or e.h ~= h then
+		e.buf, e.w, e.h = buffer.create(w * h * 4), w, h
+	end
+	return e.buf, w, h
+end
+
+local function pixelColor(color, transparency, level)
+	if typeOf(color) ~= "Color3" then
+		error("expected a Color3", level + 1)
+	end
+	local a = 1 - math.clamp(tonumber(transparency) or 0, 0, 1)
+	return math.floor(color.R * 255 + 0.5), math.floor(color.G * 255 + 0.5), math.floor(color.B * 255 + 0.5), math.floor(a * 255 + 0.5)
+end
+
+local function plot(buf, w, h, x, y, r, g, b, a)
+	x, y = math.floor(x), math.floor(y)
+	if x < 0 or y < 0 or x >= w or y >= h then
+		return
+	end
+	local o = (y * w + x) * 4
+	buffer.writeu8(buf, o, r)
+	buffer.writeu8(buf, o + 1, g)
+	buffer.writeu8(buf, o + 2, b)
+	buffer.writeu8(buf, o + 3, a)
+end
+
+flushImages = function()
+	for img in dirtyImages do
+		local d = D[img]
+		if d and not d.destroyed and d.extra and d.extra.buf then
+			setProp(img, "Data", base64(buffer.tostring(d.extra.buf)))
+		end
+	end
+	table.clear(dirtyImages)
+end
+
+Methods.DynamicImage = {
+	-- Every pixel this color (transparency 1 = see-through).
+	Fill = function(self, color, transparency)
+		local buf, w, h = imageBuffer(self)
+		local r, g, b, a = pixelColor(color, transparency, 2)
+		for i = 0, w * h - 1 do
+			buffer.writeu8(buf, i * 4, r)
+			buffer.writeu8(buf, i * 4 + 1, g)
+			buffer.writeu8(buf, i * 4 + 2, b)
+			buffer.writeu8(buf, i * 4 + 3, a)
+		end
+		dirtyImages[self] = true
+	end,
+	-- All see-through again.
+	Clear = function(self)
+		local buf = imageBuffer(self)
+		buffer.fill(buf, 0, 0)
+		dirtyImages[self] = true
+	end,
+	SetPixel = function(self, x, y, color, transparency)
+		local buf, w, h = imageBuffer(self)
+		local r, g, b, a = pixelColor(color, transparency, 2)
+		plot(buf, w, h, tonumber(x) or 0, tonumber(y) or 0, r, g, b, a)
+		dirtyImages[self] = true
+	end,
+	-- The pixel's Color3 and transparency.
+	GetPixel = function(self, x, y)
+		local buf, w, h = imageBuffer(self)
+		x, y = math.floor(tonumber(x) or 0), math.floor(tonumber(y) or 0)
+		if x < 0 or y < 0 or x >= w or y >= h then
+			return c3(0, 0, 0), 1
+		end
+		local o = (y * w + x) * 4
+		return c3(buffer.readu8(buf, o) / 255, buffer.readu8(buf, o + 1) / 255, buffer.readu8(buf, o + 2) / 255), 1 - buffer.readu8(buf, o + 3) / 255
+	end,
+	DrawRect = function(self, x, y, width, height, color, transparency)
+		local buf, w, h = imageBuffer(self)
+		local r, g, b, a = pixelColor(color, transparency, 2)
+		x, y = math.floor(tonumber(x) or 0), math.floor(tonumber(y) or 0)
+		for py = math.max(y, 0), math.min(y + math.floor(tonumber(height) or 0), h) - 1 do
+			for px = math.max(x, 0), math.min(x + math.floor(tonumber(width) or 0), w) - 1 do
+				plot(buf, w, h, px, py, r, g, b, a)
+			end
+		end
+		dirtyImages[self] = true
+	end,
+	DrawCircle = function(self, cx, cy, radius, color, transparency)
+		local buf, w, h = imageBuffer(self)
+		local r, g, b, a = pixelColor(color, transparency, 2)
+		cx, cy, radius = tonumber(cx) or 0, tonumber(cy) or 0, math.max(tonumber(radius) or 0, 0)
+		for py = math.max(math.floor(cy - radius), 0), math.min(math.ceil(cy + radius), h - 1) do
+			for px = math.max(math.floor(cx - radius), 0), math.min(math.ceil(cx + radius), w - 1) do
+				if (px + 0.5 - cx) ^ 2 + (py + 0.5 - cy) ^ 2 <= radius * radius then
+					plot(buf, w, h, px, py, r, g, b, a)
+				end
+			end
+		end
+		dirtyImages[self] = true
+	end,
+	DrawLine = function(self, x1, y1, x2, y2, color, transparency)
+		local buf, w, h = imageBuffer(self)
+		local r, g, b, a = pixelColor(color, transparency, 2)
+		x1, y1, x2, y2 = tonumber(x1) or 0, tonumber(y1) or 0, tonumber(x2) or 0, tonumber(y2) or 0
+		local steps = math.max(math.abs(x2 - x1), math.abs(y2 - y1), 1)
+		for i = 0, math.min(math.ceil(steps), 512) do
+			local t = i / steps
+			plot(buf, w, h, x1 + (x2 - x1) * t, y1 + (y2 - y1) * t, r, g, b, a)
+		end
+		dirtyImages[self] = true
+	end,
+	-- What to put in an ImageLabel's Image, a Part's Texture or a ParticleEmitter's Texture.
+	GetContent = function(self)
+		return "dynimg://" .. D[self].id
+	end,
+}
+
+Methods.ParticleEmitter = {
+	-- A burst of `count` particles at once (1-200), whatever its Rate.
+	Emit = function(self, count)
+		emit({ o = "particles", id = D[self].id, n = math.clamp(math.floor(tonumber(count) or 10), 1, 200) })
+	end,
+	-- Takes away every particle it has out right now.
+	Clear = function(self)
+		emit({ o = "particles", id = D[self].id, clear = true })
+	end,
+}
+
 Methods.Seat = {
 	-- Sits that player down on this seat (server: tells their app; they can jump off).
 	Sit = function(self, humanoid)
@@ -2982,6 +3136,29 @@ Methods.Player = {
 		loadCharacter(self)
 	end,
 	-- Moves the player's character (server: tells their app to teleport).
+	-- Server: flies the player's character in a straight line to `pos` over `seconds`
+	-- (walls stop it). With Humanoid.Floating on it then stays up there; off, it falls.
+	-- The movement check expects the trip, so it isn't taken for a flying cheat.
+	Glide = function(self, pos, seconds)
+		if role ~= "server" then
+			error("Glide can only be called from a Script", 2)
+		end
+		if typeOf(pos) ~= "Vector3" then
+			error("Glide needs a Vector3", 2)
+		end
+		local t = math.clamp(tonumber(seconds) or 1, 0.05, 30)
+		emit({ o = "glide", to = D[self].props.UserId, pos = encodeValue(pos), t = t })
+	end,
+	-- Server: seconds since this player's app last reported in (it does at least once a
+	-- second, standing still too). A few seconds means their connection froze: what
+	-- the server knows about them is old, so don't let a hit land on where they were.
+	GetNetworkIdle = function(self)
+		if role ~= "server" then
+			return 0
+		end
+		local t = lastHeard[self]
+		return t and math.max(0, simTime - t) or 0
+	end,
 	Teleport = function(self, pos)
 		if typeOf(pos) ~= "Vector3" then
 			error("Teleport needs a Vector3", 2)
@@ -3497,6 +3674,7 @@ function handlers.player_remove(e)
 	fireEvent(services.Players, "PlayerRemoving", p)
 	playersByUser[tonumber(e.userId)] = nil
 	respawnAt[p] = nil
+	lastHeard[p] = nil
 	local model = D[p].props.Character
 	if model and D[model] then
 		destroy(model)
@@ -3506,6 +3684,9 @@ end
 -- where a player's character is (sent by their app; kept off the wire)
 function handlers.pos(e)
 	local player = role == "server" and playersByUser[tonumber(e.userId)] or (localUserId and playersByUser[localUserId])
+	if player and role == "server" then
+		lastHeard[player] = simTime
+	end
 	local root = characterRoot(player)
 	if root then
 		setProp(root, "Position", decodeValue(e.p), true)
@@ -3584,6 +3765,12 @@ function handlers.seat(e)
 	end
 	local seat = e.id and byId[e.id]
 	if seat and D[seat].class.name == "Seat" and not D[seat].props.Disabled then
+		-- One per seat: someone (alive) is already on it, so this player stands back up.
+		local occ = D[seat].props.Occupant
+		if occ and occ ~= hum and D[occ] and not D[occ].destroyed and (D[occ].props.Health or 0) > 0 then
+			emit({ o = "sit", to = D[player].props.UserId, id = "" })
+			return
+		end
 		setProp(seat, "Occupant", hum)
 	end
 end
@@ -3748,6 +3935,29 @@ function handlers.camera(e)
 	if isV3(look) then
 		setProp(cam, "LookVector", look, true)
 	end
+end
+-- A ProximityPrompt used (the key held long enough, or a tap). The server checks the
+-- player is really near it; each app fires it for its own player too.
+function handlers.prompt(e)
+	local pr = byId[e.id]
+	if not pr or D[pr].destroyed or D[pr].class.name ~= "ProximityPrompt" or not D[pr].props.Enabled then
+		return
+	end
+	local player = role == "server" and playersByUser[tonumber(e.userId)] or (localUserId and playersByUser[localUserId])
+	if not player then
+		return
+	end
+	if role == "server" then
+		local root = characterRoot(player)
+		local part = D[pr].parent
+		if not root or not part or not D[part] or not D[part].class.isA.BasePart then
+			return
+		end
+		if (D[root].props.Position - D[part].props.Position).Magnitude > D[pr].props.MaxActivationDistance + 6 then
+			return
+		end
+	end
+	fireEvent(pr, "Triggered", player)
 end
 function handlers.click(e)
 	local det = byId[e.id]
@@ -3948,9 +4158,51 @@ end
 
 -- Movement limits per player for the server's anti-cheat: how fast and how high
 -- each character may legitimately go right now.
+-- For the server's movement check: is anything solid under this player (they may be
+-- in the air only as long as a jump or a fall lasts), and are they by a Climbable part?
+-- `solid` is the collidable parts outside characters, gathered once per check.
+local function nearPart(part, pos, radius)
+	local p = D[part].props
+	local m = rotMatrix(p.Rotation)
+	local h = p.Size / 2
+	local d2 = 0
+	for i, axis in { "X", "Y", "Z" } do
+		local e = math.abs(m[i * 3 - 2]) * h.X + math.abs(m[i * 3 - 1]) * h.Y + math.abs(m[i * 3]) * h.Z
+		local dist = math.max(math.abs(pos[axis] - p.Position[axis]) - e, 0)
+		d2 += dist * dist
+	end
+	return d2 <= radius * radius
+end
+
+local function footing(pos, solid)
+	-- The feet are a bit below the reported position; anything within reach under them counts.
+	local feet = pos - v3(0, 0.9, 0)
+	local grounded, climb = false, false
+	for _, part in solid do
+		if not grounded and nearPart(part, feet, 1.3) then
+			grounded = true
+		end
+		if not climb and D[part].props.Climbable and nearPart(part, pos, 2.5) then
+			climb = true
+		end
+		if grounded and climb then
+			break
+		end
+	end
+	return grounded, climb
+end
+
 G.__limits = function()
 	local out = {}
 	local ws = services.Workspace and D[services.Workspace].props or {}
+	local characters = {}
+	for _, player in playersByUser do
+		local ch = D[player].props.Character
+		if ch and D[ch] then
+			characters[#characters + 1] = ch
+		end
+	end
+	local solid = queryParts({ FilterDescendantsInstances = characters, FilterType = "Exclude", RespectCanCollide = true })
 	for uid, player in playersByUser do
 		local hum = humanoidOf(player)
 		local hp = hum and D[hum] and D[hum].props
@@ -3962,7 +4214,19 @@ G.__limits = function()
 			-- climbing Climbable parts goes up at 6 studs a second
 			rise = 7,
 			check = starterValue("AntiCheat") ~= false,
+			-- Where other players are: only within this many studs (0 = everywhere), unless
+			-- the place lets this player see everyone (Player.SyncAll: spectators, abilities).
+			range = starterValue("PlayerSyncRange") or 0,
+			all = D[player].props.SyncAll == true,
 		}
+		local root = characterRoot(player)
+		local pos = root and D[root] and D[root].props.Position
+		if pos then
+			local grounded, climb = footing(pos, solid)
+			out[tostring(uid)].grounded = grounded
+			out[tostring(uid)].climb = climb
+			out[tostring(uid)].floating = hp ~= nil and hp.Floating == true
+		end
 	end
 	return json.encode(out)
 end

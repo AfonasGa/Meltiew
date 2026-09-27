@@ -28,6 +28,7 @@ var theme: Theme
 var font_regular: FontVariation
 var font_bold: FontVariation
 var font_black: FontVariation
+var _marks := RegEx.create_from_string("(\\p{M}{3})\\p{M}+")
 
 var _fade_layer: CanvasLayer
 var _fade: ColorRect
@@ -684,3 +685,9 @@ func default_ui_scale() -> float:
 		var inches := Vector2(screen).length() / maxf(float(DisplayServer.screen_get_dpi()), 1.0)
 		return 1.35 if inches < 7.5 else 1.15
 	return 1.0
+
+
+## "Zalgo" text (hundreds of combining marks on one letter) hangs text shaping: runs of
+## marks are cut to 3, enough for any real language. For text that places' scripts write.
+func tame(text: String) -> String:
+	return _marks.sub(text, "$1", true) if text.length() > 3 else text

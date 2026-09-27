@@ -34,6 +34,7 @@ export const FACE_PRICES = {
   '-_-': { pieces: 8, orbs: 100 },
   ':|': { pieces: 6, orbs: 80 },
   '<3': { pieces: 15 },
+  '>:)': { pieces: 15, orbs: 180 },
 };
 
 export const DAILY_ORBS = 15;
@@ -103,6 +104,9 @@ export function createEconomy({ db, hub, mediaDir, HttpError, bad, cleanText, re
     ticketReply: db.prepare('UPDATE tickets SET reply = ?, status = ?, updated_at = ? WHERE id = ?'),
     ticketsOpenBy: db.prepare("SELECT COUNT(*) AS n FROM tickets WHERE user_id = ? AND status = 'open'"),
     place: db.prepare('SELECT * FROM places WHERE id = ? AND deleted = 0'),
+    communityLive: db.prepare('SELECT id FROM communities WHERE id = ? AND deleted = 0'),
+    bankAdd: db.prepare('UPDATE communities SET bank = bank + ? WHERE id = ?'),
+    bankLog: db.prepare('INSERT INTO community_bank_log (community_id, delta, reason, ref, user_id, created_at) VALUES (?, ?, ?, ?, ?, ?)'),
     passes: db.prepare('SELECT * FROM gamepasses WHERE place_id = ? AND deleted = 0 ORDER BY price, id'),
     pass: db.prepare('SELECT * FROM gamepasses WHERE id = ? AND deleted = 0'),
     passCount: db.prepare('SELECT COUNT(*) AS n FROM gamepasses WHERE place_id = ? AND deleted = 0'),
@@ -373,7 +377,13 @@ export function createEconomy({ db, hub, mediaDir, HttpError, bad, cleanText, re
       change(user.id, 'pieces', -pass.price, 'gamepass', pass.id);
       q.passGive.run(pass.id, user.id, Date.now());
       q.passSold.run(pass.id);
-      if (place.owner_id && place.owner_id !== user.id) change(place.owner_id, 'pieces', Math.floor(pass.price * CREATOR_SHARE), 'gamepass_sale', pass.id);
+      const share = Math.floor(pass.price * CREATOR_SHARE);
+      // A community's place: the sale goes to the community's bank, to be paid out from there.
+      const community = place.community_id ? q.communityLive.get(place.community_id) : null;
+      if (community) {
+        q.bankAdd.run(share, community.id);
+        q.bankLog.run(community.id, share, 'gamepass_sale', String(pass.id), user.id, Date.now());
+      } else if (place.owner_id && place.owner_id !== user.id) change(place.owner_id, 'pieces', share, 'gamepass_sale', pass.id);
     });
     hub.passBought?.(user.id, pass.place_id, pass.id);
     return { already: false };

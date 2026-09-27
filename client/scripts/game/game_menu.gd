@@ -194,7 +194,7 @@ func show_tab(id: String) -> void:
 
 
 func _render_players() -> void:
-	_body.add_child(UI.label(L.t("players_on_server", [game.users.size(), 10]), 26, UI.TEXT, "black"))
+	_body.add_child(UI.label(L.t("players_on_server", [game.users.size(), int(game.server_info.get("max_players", 10))]), 26, UI.TEXT, "black"))
 	_body.add_child(UI.label(L.field(game.server_info, "name"), 16, UI.MUTED, "bold"))
 	var list: Array = game.users.values()
 	list.sort_custom(func(a, b): return str(a.display_name) < str(b.display_name))

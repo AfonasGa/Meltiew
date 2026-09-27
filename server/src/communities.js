@@ -7,12 +7,14 @@
 //   moderate - delete messages, remove and ban members ranked below you
 //   places   - make, edit and publish the community's places
 //   post     - write in channels (each channel can also ask for a minimum rank)
+//   bank     - pay out the community's bank (gamepass sales in its places land there)
 import { chatRules } from './age.js';
-import { filterText } from './filter.js';
+import { filterText, tameMarks } from './filter.js';
 import { pickLang } from './i18n.js';
 
 export const COMMUNITY_PRICE = { pieces: 10, orbs: 100 };
-export const PERMS = ['manage', 'moderate', 'places', 'post'];
+export const PERMS = ['manage', 'moderate', 'places', 'post', 'bank'];
+const BANK_LOG = 50;
 const MAX_OWNED = 5;
 const MAX_JOINED = 50;
 const MAX_ROLES = 12;
@@ -71,6 +73,21 @@ export function migrateCommunities(db) {
   const cols = new Set(db.prepare('PRAGMA table_info(places)').all().map((c) => c.name));
   if (!cols.has('community_id')) db.exec('ALTER TABLE places ADD COLUMN community_id INTEGER');
   if (!cols.has('edited_by')) db.exec('ALTER TABLE places ADD COLUMN edited_by INTEGER');
+  // The bank: pieces from gamepass sales in the community's places, paid out by the owner.
+  const ccols = new Set(db.prepare('PRAGMA table_info(communities)').all().map((c) => c.name));
+  if (!ccols.has('bank')) db.exec('ALTER TABLE communities ADD COLUMN bank INTEGER NOT NULL DEFAULT 0');
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS community_bank_log (
+      id           INTEGER PRIMARY KEY AUTOINCREMENT,
+      community_id INTEGER NOT NULL REFERENCES communities(id) ON DELETE CASCADE,
+      delta        INTEGER NOT NULL,
+      reason       TEXT NOT NULL,
+      ref          TEXT NOT NULL DEFAULT '',
+      user_id      INTEGER,
+      created_at   INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS community_bank_log_by ON community_bank_log(community_id, id);
+  `);
 }
 
 export function createCommunities({ db, economy, HttpError, bad, cleanText, requireAuth, writeLimiter, authorCard, placeView, canSee }) {
@@ -118,6 +135,11 @@ export function createCommunities({ db, economy, HttpError, bad, cleanText, requ
     places: db.prepare("SELECT * FROM places WHERE community_id = ? AND kind = 'studio' AND deleted = 0 ORDER BY visits DESC"),
     releasePlaces: db.prepare('UPDATE places SET community_id = NULL, owner_id = ? WHERE community_id = ?'),
     userById: db.prepare('SELECT * FROM users WHERE id = ?'),
+    setChannelPos: db.prepare('UPDATE community_channels SET position = ? WHERE id = ?'),
+    bankTake: db.prepare('UPDATE communities SET bank = bank - ? WHERE id = ? AND bank >= ?'),
+    bankLog: db.prepare('INSERT INTO community_bank_log (community_id, delta, reason, ref, user_id, created_at) VALUES (?, ?, ?, ?, ?, ?)'),
+    bankHistory: db.prepare(`SELECT l.*, u.username, u.display_name, u.role, u.render_hash, u.colors, u.hat, u.face FROM community_bank_log l
+      LEFT JOIN users u ON u.id = l.user_id WHERE l.community_id = ? ORDER BY l.id DESC LIMIT ${BANK_LOG}`),
   };
 
   function tx(fn) {
@@ -188,6 +210,7 @@ export function createCommunities({ db, economy, HttpError, bad, cleanText, requ
       roles: q.roles.all(c.id).map(roleView),
       channels: q.channels.all(c.id).map(channelView),
       me: m ? { rank: m.rank, role_id: m.role_id, role_name: m.role_name, perms: m.rank >= 255 ? [...PERMS] : [...m.perms] } : null,
+      bank: m ? c.bank || 0 : undefined,
       banned: !m && !!q.banned.get(c.id, userId),
     };
   }
@@ -380,6 +403,13 @@ export function createCommunities({ db, economy, HttpError, bad, cleanText, requ
       const name = body.name !== undefined ? cleanText(body.name, 30).toLowerCase().replace(/\s+/g, '-') || ch.name : ch.name;
       const postRank = body.post_rank !== undefined ? Math.max(1, Math.min(255, Math.round(Number(body.post_rank) || 1))) : ch.post_rank;
       q.updateChannel.run(name, postRank, ch.id);
+      // Moving it: `position` is where it goes in the list (0 = first); the rest close up.
+      if (body.position !== undefined) {
+        const list = q.channels.all(c.id).filter((x) => x.id !== ch.id);
+        const at = Math.max(0, Math.min(list.length, Math.round(Number(body.position) || 0)));
+        list.splice(at, 0, ch);
+        tx(() => list.forEach((x, i) => q.setChannelPos.run(i, x.id)));
+      }
       return { community: view(c, user.id) };
     },
 
@@ -414,7 +444,7 @@ export function createCommunities({ db, economy, HttpError, bad, cleanText, requ
       const rules = chatRules(auth.user.birthdate);
       if (!rules.chat) throw new HttpError(403, 'chat_age');
       if (!writeLimiter.allow('cmsg:' + auth.user.id)) throw new HttpError(429, 'slow_down');
-      const text = String(body.text ?? '').replace(/[\u0000-\u0009\u000b-\u001f\u007f]/g, ' ').trim().slice(0, 1000);
+      const text = tameMarks(body.text).replace(/[\u0000-\u0009\u000b-\u001f\u007f]/g, ' ').trim().slice(0, 1000);
       if (!text) throw bad('empty_message');
       const id = Number(q.insertMessage.run(ch.id, auth.user.id, text, Date.now()).lastInsertRowid);
       const row = q.after.all(ch.id, id - 1)[0];
@@ -422,6 +452,47 @@ export function createCommunities({ db, economy, HttpError, bad, cleanText, requ
     },
 
     // The community's places this viewer may see (members see private ones too).
+    // The bank: members see the balance and what came in and went out.
+    'GET /api/communities/:id/bank': (req, _b, _u, params) => {
+      const { user } = requireAuth(req);
+      const c = communityOr404(params.id);
+      if (!membership(c.id, user.id)) throw new HttpError(403, 'forbidden');
+      return {
+        bank: c.bank || 0,
+        can_pay: can(c.id, user.id, 'bank'),
+        log: q.bankHistory.all(c.id).map((l) => ({
+          delta: l.delta, reason: l.reason, ref: l.ref, created_at: l.created_at,
+          user: l.user_id && l.username ? authorCard({ ...l, id: l.user_id }) : null,
+        })),
+      };
+    },
+
+    // Pays members out of the bank: { payouts: [{ user_id, amount }] }, one or split between several.
+    'POST /api/communities/:id/bank/pay': (req, body, _u, params) => {
+      const { user, c } = need(req, params.id, 'bank');
+      if (!writeLimiter.allow('bank:' + user.id)) throw new HttpError(429, 'slow_down');
+      const list = Array.isArray(body.payouts) ? body.payouts.slice(0, 50) : [];
+      const payouts = [];
+      for (const p of list) {
+        const uid = Math.round(Number(p?.user_id));
+        const amount = Math.floor(Number(p?.amount));
+        if (!Number.isFinite(amount) || amount < 1) throw bad('bad_payout');
+        if (!membership(c.id, uid)) throw bad('not_a_member');
+        payouts.push({ uid, amount });
+      }
+      const total = payouts.reduce((n, p) => n + p.amount, 0);
+      if (!total) throw bad('bad_payout');
+      tx(() => {
+        if (q.bankTake.run(total, c.id, total).changes !== 1) throw new HttpError(402, 'not_enough_in_bank');
+        const now = Date.now();
+        for (const p of payouts) {
+          economy.change(p.uid, 'pieces', p.amount, 'community_payout', String(c.id));
+          q.bankLog.run(c.id, -p.amount, 'payout', String(user.id), p.uid, now);
+        }
+      });
+      return { bank: q.one.get(c.id).bank, wallet: economy.wallet(user.id) };
+    },
+
     'GET /api/communities/:id/places': (req, _b, _u, params) => {
       const { user } = requireAuth(req);
       const c = communityOr404(params.id);

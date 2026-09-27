@@ -4,7 +4,7 @@ import { wornOf, legacyHat, accessoryExists, cleanWorn } from './accessories.js'
 import { msg } from './i18n.js';
 import { MoveGuard, PLAYGROUND_LIMITS } from './anticheat.js';
 import { chatRules, FACES } from './age.js';
-import { filterText } from './filter.js';
+import { filterText, tameMarks } from './filter.js';
 import { PlaceVM } from './studio/vm.js';
 import { createOutbox, splitOps, splitSnapshot, CHUNK_BYTES } from './outbox.js';
 
@@ -40,10 +40,10 @@ const PHYS_MAX_BATCH = 64;
 const PHYS_CLAIM_RANGE = 12; // how close you must be to take a part over
 const PHYS_HANDOFF_MARGIN = 3; // someone must be this much closer to take it from its owner
 const PHYS_LIMIT = 5000;
-export const ANIMS = new Set(['idle', 'walk', 'run', 'jump', 'fall', 'wave', 'dance', 'cheer', 'sit', 'clap', 'laugh', 'dead', 'climb', 'punch', 'throw']);
+export const ANIMS = new Set(['idle', 'walk', 'run', 'jump', 'fall', 'wave', 'dance', 'cheer', 'sit', 'clap', 'laugh', 'dead', 'climb', 'punch', 'throw', 'hug', 'hugging']);
 export const HEART_COOLDOWN_MS = 2500;
 export const EMOTE_COOLDOWN_MS = 800;
-export const EMOTES = new Set(['wave', 'heart', 'dance', 'cheer', 'sit', 'clap', 'laugh']);
+export const EMOTES = new Set(['wave', 'heart', 'dance', 'cheer', 'sit', 'clap', 'laugh', 'hug']);
 const SERVER_NAMES = [
   ['Sunny', 'Солнечная'],
   ['Vanilla', 'Ванильная'],
@@ -216,6 +216,7 @@ export class GameHub {
         case 'rig_anim':
         case 'mesh':
         case 'meshv':
+        case 'particles':
           server.shared.push(op);
           break;
         case 'fire':
@@ -231,6 +232,16 @@ export class GameHub {
           const v = op.pos?.$v3;
           if (who && Array.isArray(v)) who.guard.teleportTo(v.map(Number));
           this.target(server, op.to, { o: 'spawn', pos: op.pos });
+          break;
+        }
+        case 'glide': {
+          // Player:Glide: the app flies there itself; the movement check expects the trip.
+          const who = server.players.get(Number(op.to));
+          const v = op.pos?.$v3;
+          const t = Math.max(0.05, Math.min(30, Number(op.t) || 1));
+          if (!who || !Array.isArray(v)) break;
+          who.guard.glideTo(who.p, v.map(Number), t * 1000);
+          this.target(server, op.to, { o: 'glide', pos: op.pos, t });
           break;
         }
         case 'kick':
@@ -316,8 +327,9 @@ export class GameHub {
     const dt = Math.min(0.25, (now - server.lastStep) / 1000);
     server.lastStep = now;
     try {
-      const events = server.inbox;
-      server.inbox = [];
+      // Where everyone is first, then what they did: a shot is judged from where the
+      // shooter stands now, not a tick ago.
+      const events = [];
       for (const p of server.players.values()) {
         p.events = 0;
         if (p.posDirty) {
@@ -325,6 +337,8 @@ export class GameHub {
           events.push({ e: 'pos', userId: p.user.id, p: { $v3: p.p } });
         }
       }
+      events.push(...server.inbox);
+      server.inbox = [];
       if (events.length) this.routeOps(server, server.vm.dispatch(events));
       this.routeOps(server, server.vm.step(dt));
       if (!server.limitsAt || now - server.limitsAt > 250) {
@@ -596,11 +610,14 @@ export class GameHub {
       case 'click':
       case 'tool':
       case 'seat':
+      case 'prompt':
         return this.placeEvent(conn, m);
       case 'state':
         return this.state(conn, m);
       case 'chat':
         return this.chat(conn, m);
+      case 'hug':
+        return this.hug(conn, m);
       case 'emote':
         if (conn.server && conn.player && EMOTES.has(m.e) && conn.server.emotes !== false) {
           // Spamming (hearts especially) floods everyone's screen: one per cooldown.
@@ -636,10 +653,21 @@ export class GameHub {
     if (++pl.events > MAX_EVENTS_PER_TICK) return;
     const id = String(m.id ?? '').slice(0, 20);
     const userId = conn.user.id;
+    // Apps from 1.6.2 send where they are with shots and tool uses: checked like any move,
+    // and put in right before the event, so the server sees the shooter where they are.
+    if (Array.isArray(m.p) && (m.t === 'remote' || m.t === 'invoke' || m.t === 'tool' || m.t === 'prompt')) {
+      const before = pl.p;
+      this.state(conn, { p: m.p, r: pl.r, a: pl.a });
+      if (pl.p !== before) {
+        pl.posDirty = false;
+        server.inbox.push({ e: 'pos', userId, p: { $v3: pl.p } });
+      }
+    }
     if (m.t === 'remote') server.inbox.push({ e: 'fire', userId, id, args: Array.isArray(m.args) ? m.args.slice(0, 20) : [] });
     else if (m.t === 'invoke') server.inbox.push({ e: 'invoke', userId, id, rid: Number(m.rid) || 0, args: Array.isArray(m.args) ? m.args.slice(0, 20) : [] });
     else if (m.t === 'touch') server.inbox.push({ e: 'touch', userId, id, ended: m.ended === true });
     else if (m.t === 'click') server.inbox.push({ e: 'click', userId, id });
+    else if (m.t === 'prompt') server.inbox.push({ e: 'prompt', userId, id });
     else if (m.t === 'seat') server.inbox.push({ e: 'seat', userId, id: m.id == null ? undefined : id });
     else if (m.t === 'tool' && TOOL_EVENTS.has(m.ev)) {
       const p = Array.isArray(m.p?.$v3) ? { $v3: m.p.$v3.slice(0, 3).map(Number) } : undefined;
@@ -732,7 +760,7 @@ export class GameHub {
     this.places?.visit(game, conn.user.id);
     this.onJoin(game);
     this.economy?.progress(conn.user.id, 'places', 1, game);
-    this.log(`${conn.user.username} joined ${server.id} (${server.players.size}/${MAX_PLAYERS})`);
+    this.log(`${conn.user.username} joined ${server.id} (${server.players.size}/${server.maxPlayers || MAX_PLAYERS})`);
   }
 
   state(conn, m) {
@@ -751,6 +779,24 @@ export class GameHub {
     pl.a = ANIMS.has(m.a) || /^anim:\/\/\d{1,10}$/.test(String(m.a)) ? m.a : 'idle';
     pl.dirty = true;
     pl.posDirty = true;
+  }
+
+  /**
+   * Taking someone's open arms (they're doing the hug emote, and close): you're put
+   * right in front of them, face to face, and both apps play the hug once.
+   */
+  hug(conn, m) {
+    const server = conn.server;
+    const me = conn.player;
+    const other = server?.players.get(Number(m.id));
+    if (!me || !other || other === me || server.emotes === false) return;
+    if (other.a !== 'hug' || dist(me.p, other.p) > 12) return;
+    const yaw = Number(other.r) || 0;
+    // Where they face: the app turns Melly by `yaw`, facing (-sin, 0, -cos).
+    const front = [other.p[0] - Math.sin(yaw) * 1.5, other.p[1], other.p[2] - Math.cos(yaw) * 1.5];
+    me.guard.teleportTo(front);
+    conn.send({ t: 'hug', with: other.user.id, pos: front, r: yaw + Math.PI });
+    other.conn.send({ t: 'hug', with: me.user.id });
   }
 
   /** How fast and high this player may go in this place right now. */
@@ -788,7 +834,7 @@ export class GameHub {
 
   chat(conn, m) {
     if (!conn.server || conn.server.chat === false) return;
-    const text = String(m.m ?? '')
+    const text = tameMarks(m.m)
       .replace(/[\u0000-\u001f\u007f]/g, ' ')
       .trim()
       .slice(0, 200);
@@ -854,7 +900,7 @@ export class GameHub {
         target.conn.send({ t: 'admin_kill' });
         return done('kill', target.user.display_name);
       case 'announce': {
-        const text = String(m.m ?? '').replace(/[\u0000-\u001f\u007f]/g, ' ').trim().slice(0, 200);
+        const text = tameMarks(m.m).replace(/[\u0000-\u001f\u007f]/g, ' ').trim().slice(0, 200);
         if (!text) return;
         this.broadcast(server, { t: 'sys', k: 'admin', m: text });
         return done('announce');
@@ -892,7 +938,7 @@ export class GameHub {
       }
       this.places?.playtime(server.game, conn.user.id, Date.now() - player.joinedAt);
       if (server.players.size === 0) server.emptySince = Date.now();
-      this.log(`${conn.user.username} left ${server.id} (${server.players.size}/${MAX_PLAYERS})`);
+      this.log(`${conn.user.username} left ${server.id} (${server.players.size}/${server.maxPlayers || MAX_PLAYERS})`);
     }
     conn.server = null;
     conn.player = null;
@@ -961,6 +1007,52 @@ export class GameHub {
     for (const server of this.servers.values()) this.broadcast(server, { t: 'sys', k: 'admin', m: text });
   }
 
+  /**
+   * Where everyone is, 20 times a second. A place with StarterPlayer.PlayerSyncRange
+   * only tells each player about the ones near them (unless Player.SyncAll): what a
+   * wallhack can't receive, it can't draw. Someone leaving your range is sent once to
+   * far below the world, so every app (old ones too) stops showing them.
+   */
+  sendStates(server, now) {
+    const state = (id, p) => [id, +p.p[0].toFixed(3), +p.p[1].toFixed(3), +p.p[2].toFixed(3), +p.r.toFixed(3), p.a];
+    const dirty = [];
+    for (const [id, p] of server.players) {
+      if (p.dirty) dirty.push(id);
+      p.dirty = false;
+    }
+    const all = [];
+    for (const id of dirty) all.push(state(id, server.players.get(id)));
+    for (const [rid, r] of server.players) {
+      const lim = server.limits?.[String(rid)];
+      const range = server.vm && lim && !lim.all ? Number(lim.range) || 0 : 0;
+      if (range <= 0) {
+        // Everyone in sight: whoever moved, plus anyone this player lost track of before.
+        let out = all;
+        if (r.seen) {
+          out = all.slice();
+          for (const [id, p] of server.players) if (id !== rid && !r.seen.has(id) && !dirty.includes(id)) out.push(state(id, p));
+          r.seen = null;
+        }
+        if (out.length) r.conn.send({ t: 's', s: out, ts: now });
+        continue;
+      }
+      r.seen ??= new Set([...server.players.keys()]);
+      const out = [];
+      for (const [id, p] of server.players) {
+        if (id === rid) continue;
+        const near = dist(p.p, r.p) <= range;
+        if (near && (dirty.includes(id) || !r.seen.has(id))) {
+          out.push(state(id, p));
+          r.seen.add(id);
+        } else if (!near && r.seen.has(id)) {
+          out.push([id, 0, -10000, 0, 0, 'idle']);
+          r.seen.delete(id);
+        }
+      }
+      if (out.length) r.conn.send({ t: 's', s: out, ts: now });
+    }
+  }
+
   broadcast(server, m, exceptId = null) {
     const data = JSON.stringify(m);
     for (const [id, p] of server.players) {
@@ -985,13 +1077,7 @@ export class GameHub {
         this.stepPhys(server, now);
         this.stepPlace(server, now);
       }
-      const states = [];
-      for (const [id, p] of server.players) {
-        if (!p.dirty) continue;
-        p.dirty = false;
-        states.push([id, +p.p[0].toFixed(3), +p.p[1].toFixed(3), +p.p[2].toFixed(3), +p.r.toFixed(3), p.a]);
-      }
-      if (states.length) this.broadcast(server, { t: 's', s: states, ts: now });
+      this.sendStates(server, now);
     }
   }
 }

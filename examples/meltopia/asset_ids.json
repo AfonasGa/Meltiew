@@ -11,5 +11,7 @@
   "SfxSurvivorsWin": "asset://8253930d3819334b",
   "SfxKillerWin": "asset://d17abcc172a6bfa7",
   "RenderKiller": "asset://ebfeb74d70b24840",
-  "RenderSurvivor": "asset://ca1c8c01dfc902ad"
+  "RenderSurvivor": "asset://ca1c8c01dfc902ad",
+  "RenderShadowless": "asset://b5dec9cae60a49a8",
+  "RenderAlt": "asset://cb178118c178bf53"
 }

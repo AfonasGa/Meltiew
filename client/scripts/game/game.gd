@@ -16,6 +16,8 @@ var _press_pos := Vector2.ZERO
 var player: LocalPlayer
 var hud: GameHud
 var menu: GameMenu
+## ProximityPrompts and "Hug" by players waiting for one (see PlacePrompts).
+var prompts: PlacePrompts
 var remotes := {}  # user id -> RemotePlayer
 var users := {}  # user id -> public user dict (everyone incl. me)
 var my_id := -1
@@ -58,9 +60,7 @@ func _ready() -> void:
 	player.global_position = world.spawn_point
 	player.avatar.apply_user(Session.user)
 	player.jumped.connect(func(): Sfx.play("jump", randf_range(0.95, 1.08)))
-	player.landed.connect(func(impact):
-		if impact > 9.0:
-			Sfx.play("land", clampf(1.3 - impact / 60.0, 0.7, 1.2)))
+	# (No landing thud: it got on everyone's nerves.)
 	player.hurt.connect(func(_amount): Sfx.play("hurt"))
 	player.died.connect(_on_died)
 	player.bumped.connect(func(body: Node):
@@ -86,6 +86,11 @@ func _ready() -> void:
 
 	hud = GameHud.new()
 	add_child(hud)
+	prompts = PlacePrompts.new()
+	prompts.player = player
+	prompts.typing = func() -> bool: return hud.chat_open() or get_viewport().gui_get_focus_owner() is LineEdit
+	prompts.extra = _hug_prompts
+	hud.add_child(prompts)
 	hud.bind_player(player)
 	hud.menu_requested.connect(_open_menu)
 	hud.chat_submitted.connect(func(t: String):
@@ -278,6 +283,15 @@ func _on_message(m: Dictionary) -> void:
 				"admin":
 					hud.add_chat("Meltiew", str(m.get("m", "")), Color("#ffd166"))
 					hud.big_message(str(m.get("m", "")), 3.5)
+		"hug":
+			# Someone took our open arms, or we took theirs: face to face, one hug.
+			if m.has("pos"):
+				var p: Array = m.pos
+				player.global_position = Vector3(p[0], p[1], p[2])
+				player.reset_physics_interpolation()
+				player.velocity = Vector3.ZERO
+				player.face(float(m.get("r", 0.0)))
+			player.play_custom("hugging")
 		"emote":
 			var id := int(m.id)
 			if remotes.has(id) and m.e == "heart":
@@ -396,11 +410,19 @@ func _start_place(p: Dictionary) -> void:
 			place_host.scene.queue_free()
 	place_host = PlaceHost.new()
 	add_child(place_host)
-	place_host.send.connect(func(msg): net.send(msg))
+	place_host.send.connect(func(msg: Dictionary):
+		# Shots, hits, tool uses: say where you are right now, so the server checks them
+		# from there and not from where it last heard of you (a sprint's worth behind).
+		if msg.get("t") in ["remote", "invoke", "tool", "prompt"]:
+			var at := player.global_position
+			msg["p"] = [snappedf(at.x, 0.01), snappedf(at.y, 0.01), snappedf(at.z, 0.01)]
+		net.send(msg))
 	place_host.output.connect(_on_output)
 	place_host.spawn_requested.connect(func(pos: Vector3):
 		player.set_physics_process(true)
 		player.respawn_at(pos))
+	place_host.glide_requested.connect(func(pos: Vector3, seconds: float):
+		player.glide_to(pos, seconds))
 	place_host.teleport_requested.connect(func(pos: Vector3):
 		player.global_position = pos
 		player.reset_physics_interpolation()
@@ -408,6 +430,10 @@ func _start_place(p: Dictionary) -> void:
 	place_host.mouse_settings_changed.connect(_apply_cursor)
 	place_host.camera_control.connect(_camera_control)
 	place_host.sit_requested.connect(func(id: String):
+		# No seat: the server says get up (someone else sat there first).
+		if id == "" and player.seated:
+			player.stand_up()
+			return
 		if place_host.tree.has(id) and not player.dead:
 			if player.seated:
 				player.stand_up()
@@ -430,6 +456,8 @@ func _start_place(p: Dictionary) -> void:
 	if not place_host.start(my_id, L.lang, p.get("strings", {}), p.get("snapshot", []), world):
 		hud.add_chat("", L.t("place_unsupported"))
 	place_host.scene.avatar_of = _avatar_of_character
+	# The place's ProximityPrompts join the prompts shown by the HUD.
+	prompts.host = place_host
 	# Physics parts: report the ones this app simulates, ask for the ones we bump into.
 	place_host.scene.phys_report.connect(func(u: Array): net.send({"t": "phys", "u": u}))
 	place_host.scene.phys_claim.connect(func(id: String):
@@ -487,6 +515,7 @@ func _sync_place(delta: float) -> void:
 		player.traction = float(t.prop(hum, "Traction"))
 		player.bhop = t.prop(hum, "Bhop") == true
 		player.bhop_max = float(t.prop(hum, "BhopMaxSpeed"))
+		player.floating = t.prop(hum, "Floating") == true
 		var hp := float(t.prop(hum, "Health"))
 		var mx := float(t.prop(hum, "MaxHealth"))
 		if not is_equal_approx(hp, player.hp) or not is_equal_approx(mx, player.max_hp):
@@ -496,6 +525,7 @@ func _sync_place(delta: float) -> void:
 	player.set_camera_rules(str(h.player_prop("CameraMode")), float(h.player_prop("CameraMinZoom")), float(h.player_prop("CameraMaxZoom")))
 	hud.set_view_toggle(player.can_toggle_view())
 	_sync_emote_overrides()
+	_sync_joints()
 	_check_seats()
 	_sync_tools()
 	if not player.dead:
@@ -736,6 +766,13 @@ func _camera_subject(cam_id: String) -> Array:
 		id = h.tree.parent_of(id)
 	if id == "" or not h.tree.has(id) or id == h.character():
 		return [player.get_global_transform_interpolated().origin + Vector3(0, 1.5, 0), player.avatar.rotation.y]
+	# Someone else's character: where they're drawn. Their parts in the place's tree
+	# stay where they spawned (positions come on their own, not as replication), so
+	# following those left spectator cameras staring at the lobby.
+	var uid := h.user_of_character(id)
+	if uid != 0 and remotes.has(uid):
+		var rp: RemotePlayer = remotes[uid]
+		return [rp.get_global_transform_interpolated().origin + Vector3(0, 1.5, 0), rp.avatar.rotation.y]
 	var part := id
 	if not h.tree.is_a(id, "BasePart"):
 		part = ""
@@ -941,11 +978,20 @@ func _check_seats() -> void:
 		if id == _seat_left:
 			touching_left = true
 			continue
-		if id != "" and player.can_sit() and t.cls(id) == "Seat" and t.prop(id, "Disabled") != true:
+		if id != "" and player.can_sit() and t.cls(id) == "Seat" and t.prop(id, "Disabled") != true and not _seat_taken(id):
 			_sit(id)
 			return
 	if not touching_left and player.is_on_floor():
 		_seat_left = ""
+
+
+## Someone else is already sitting there (one per seat).
+func _seat_taken(id: String) -> bool:
+	var occ: Variant = place_host.tree.prop(id, "Occupant")
+	if not (occ is Dictionary and occ.has("$i")):
+		return false
+	var hum := str(occ["$i"])
+	return hum != place_host.local_humanoid() and place_host.tree.has(hum)
 
 
 func _sit(id: String) -> void:
@@ -961,6 +1007,25 @@ func _sit(id: String) -> void:
 
 
 ## EmoteOverride objects in StarterPlayer swap wheel moves for the place's own animations.
+## Scripts turning characters' joints (Humanoid *Angle properties): every Melly shows it.
+func _sync_joints() -> void:
+	var t := place_host.tree
+	for k in t.kids(t.service("Players")):
+		if t.cls(k) != "Player":
+			continue
+		var ch: Variant = t.prop(k, "Character")
+		var model := str(ch["$i"]) if ch is Dictionary and ch.has("$i") else ""
+		if model == "" or not t.has(model):
+			continue
+		var hum := t.child_of_class(model, "Humanoid")
+		if hum == "":
+			continue
+		var uid := int(t.prop(k, "UserId"))
+		var av: MellyAvatar = player.avatar if uid == my_id else (remotes[uid].avatar if remotes.has(uid) else null)
+		if av:
+			av.set_joint_angles(place_host.scene.joint_angles_of(hum))
+
+
 func _sync_emote_overrides() -> void:
 	var t := place_host.tree
 	var sp := t.service("StarterPlayer")
@@ -1037,3 +1102,18 @@ func _leave() -> void:
 		UI.goto("res://scenes/studio.tscn")
 		return
 	UI.goto("res://scenes/main_menu.tscn")
+
+
+## "Hug" by everyone near who's waiting for one (the hug emote, arms open).
+func _hug_prompts() -> Array:
+	var out: Array = []
+	if player == null or player.current_anim() == "hug":
+		return out
+	for uid in remotes:
+		var rp: RemotePlayer = remotes[uid]
+		if rp.current_anim != "hug" or not rp.visible:
+			continue
+		out.append({"id": "hug:%d" % uid, "at": rp.global_position + Vector3(0, 1.0, 0), "range": 8.0, "key": "E",
+			"action": L.t("hug_action"), "object": str(rp.user.get("display_name", "")), "hold": 0.0,
+			"use": func(): net.send({"t": "hug", "id": uid})})
+	return out

@@ -865,6 +865,43 @@ func _blocked(pos: Vector2) -> bool:
 	return false
 
 
+## Is there interface under this point (ours, the game menu's, or the place's own GUI)?
+## Wheel turns and finger drags there are for it, not for the camera: scrolling the chat
+## zoomed the camera, dragging a settings slider on a phone turned it.
+func ui_under(pos: Vector2) -> bool:
+	var screen := get_viewport().get_visible_rect().size
+	# Every UI layer in the game (the world itself is 3D and skipped).
+	for layer in get_tree().root.find_children("*", "CanvasLayer", true, false):
+		if (layer as CanvasLayer).visible and _ui_scan(layer, pos, screen):
+			return true
+	return false
+
+
+func _ui_scan(node: Node, pos: Vector2, screen: Vector2) -> bool:
+	for c in node.get_children():
+		if c is Node3D or c == joystick or c in [jump_btn, emote_btn, sprint_btn, lock_btn]:
+			continue
+		if c is CanvasItem and not (c as CanvasItem).visible:
+			continue
+		if c is Control and _grabs(c, pos, screen):
+			return true
+		if _ui_scan(c, pos, screen):
+			return true
+	return false
+
+
+func _grabs(ctl: Control, pos: Vector2, screen: Vector2) -> bool:
+	if ctl.mouse_filter == Control.MOUSE_FILTER_IGNORE or not ctl.get_global_rect().has_point(pos):
+		return false
+	if ctl is BaseButton or ctl is Range or ctl is LineEdit or ctl is TextEdit or ctl is ScrollContainer or ctl is ItemList:
+		return true
+	# A panel counts when you can see it and it isn't a whole-screen backdrop.
+	if (ctl is Panel or ctl is PanelContainer) and ctl.size.x < screen.x * 0.9:
+		var sb := ctl.get_theme_stylebox("panel")
+		return sb is StyleBoxFlat and (sb as StyleBoxFlat).bg_color.a > 0.1
+	return false
+
+
 ## Phones: may a tap here click the world (not the joystick, a button or a panel)?
 func tap_allowed(pos: Vector2) -> bool:
 	if _blocked(pos) or _overlay.visible or wheel.visible:
@@ -905,7 +942,7 @@ func _touch(e: InputEventScreenTouch) -> void:
 		for b in [jump_btn, emote_btn, sprint_btn, lock_btn]:
 			if b.touch_press(e.index, e.position):
 				return
-		if _blocked(e.position):
+		if _blocked(e.position) or ui_under(e.position):
 			return
 		var w := get_viewport().get_visible_rect().size.x
 		if e.position.x < w * 0.42 and not joystick.active():
@@ -943,11 +980,13 @@ func _drag(e: InputEventScreenDrag) -> void:
 
 func _desktop(event: InputEvent) -> void:
 	if event is InputEventMouseButton:
+		# Over the chat, a menu or the place's GUI, the wheel and right button are theirs.
+		var on_ui: bool = event.pressed and ui_under(event.position)
 		if event.button_index == MOUSE_BUTTON_RIGHT:
-			_mouse_look = event.pressed
-		elif event.button_index == MOUSE_BUTTON_WHEEL_UP and event.pressed:
+			_mouse_look = event.pressed and not on_ui
+		elif event.button_index == MOUSE_BUTTON_WHEEL_UP and event.pressed and not on_ui:
 			player.zoom_camera(-0.9)
-		elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN and event.pressed:
+		elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN and event.pressed and not on_ui:
 			player.zoom_camera(0.9)
 	elif event is InputEventMouseMotion and (_mouse_look or player.first_person or Input.mouse_mode == Input.MOUSE_MODE_CAPTURED):
 		if _mouse_look or Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:

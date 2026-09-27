@@ -3,7 +3,7 @@
 //   13-15:    game chat and direct messages are filtered
 //   16-17:    game chat is filtered, direct messages are not
 //   18+:      no filters
-export const FACES = [':D', ':)', ':3', ':P', ';)', ':O', 'xD', 'B)', '^_^', 'owo', 'uwu', '>_<', 'T_T', '-_-', ':|', '<3'];
+export const FACES = [':D', ':)', ':3', ':P', ';)', ':O', 'xD', 'B)', '^_^', 'owo', 'uwu', '>_<', 'T_T', '-_-', ':|', '<3', '>:)'];
 
 export function ageOf(birthdate, now = new Date()) {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(birthdate || ''));

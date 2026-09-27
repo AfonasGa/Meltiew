@@ -115,3 +115,48 @@ end)`;
   a.close();
   b.close();
 });
+
+test('PlayerSyncRange: far players are hidden (a wallhack has nothing to draw), SyncAll sees everyone', async () => {
+  let r = await call('POST', '/api/studio/places', { name: 'Hide' }, users.maker);
+  const placeId = r.data.place.id;
+  const melt = templatePlace('Hide');
+  melt.tree.k.find((n) => n.c === 'StarterPlayer').p = { ...(melt.tree.k.find((n) => n.c === 'StarterPlayer').p || {}), PlayerSyncRange: 30, AntiCheat: false };
+  melt.tree.k.find((n) => n.c === 'ServerScriptService').k[0].p.Source = `
+local remote = Instance.new("RemoteEvent")
+remote.Name = "SeeAll"
+remote.Parent = game.ReplicatedStorage
+remote.OnServerEvent:Connect(function(p, on) p.SyncAll = on end)`;
+  r = await call('PUT', `/api/studio/places/${placeId}`, { melt }, users.maker);
+  assert.equal(r.status, 200, r.raw);
+  await call('PATCH', `/api/studio/places/${placeId}`, { visibility: 'public' }, users.maker);
+  const a = await connect(users.maker);
+  const b = await connect(users.player);
+  a.send2({ t: 'join', game: placeId, server: 'auto' });
+  const wa = await a.next((m) => m.t === 'welcome');
+  b.send2({ t: 'join', game: placeId, server: wa.server.id });
+  const wb = await b.next((m) => m.t === 'welcome');
+  const seeAll = wa.place.snapshot.find((o) => o.n === 'SeeAll')?.id;
+  const at = (m, id) => m.t === 's' && m.s.find((s) => s[0] === id);
+  // Close by: a sees b walk.
+  a.send2({ t: 'state', p: [0, 0.6, 0], r: 0, a: 'idle' });
+  b.send2({ t: 'state', p: [5, 0.6, 0], r: 0, a: 'walk' });
+  await a.next((m) => at(m, wb.you)?.[1] === 5);
+  // b walks off 100 studs: a is told once that b is gone (far below), never where b really is.
+  const heard = [];
+  const listen = (raw) => {
+    const m = JSON.parse(raw.toString());
+    if (at(m, wb.you)) heard.push(at(m, wb.you));
+  };
+  a.on('message', listen);
+  b.send2({ t: 'state', p: [100, 0.6, 0], r: 0, a: 'walk' });
+  await new Promise((res) => setTimeout(res, 300));
+  b.send2({ t: 'state', p: [101, 0.6, 0], r: 0, a: 'walk' });
+  await new Promise((res) => setTimeout(res, 400));
+  a.off('message', listen);
+  assert.deepEqual(heard.map((s) => s[2]), [-10000]);
+  // The place lets a see everyone: b shows up where b is.
+  a.send2({ t: 'remote', id: seeAll, args: [true] });
+  await a.next((m) => at(m, wb.you)?.[1] === 101);
+  a.close();
+  b.close();
+});

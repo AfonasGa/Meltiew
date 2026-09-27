@@ -18,7 +18,11 @@ func _ready() -> void:
 	var head := UI.hbox(16)
 	var title := UI.vbox(2)
 	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	title.add_child(UI.label(L.t("nav_friends"), 34, UI.TEXT, "black"))
+	var menu: Node = get_meta("menu") if has_meta("menu") else null
+	if menu and menu.has_method("section_switch"):
+		title.add_child(menu.section_switch("friends"))
+	else:
+		title.add_child(UI.label(L.t("nav_friends"), 34, UI.TEXT, "black"))
 	title.add_child(UI.label(L.t("friends_sub"), 19, UI.MUTED))
 	head.add_child(title)
 	add_child(head)
@@ -193,7 +197,7 @@ func _row(u: Dictionary, relation: String) -> Control:
 			var playing: Variant = u.get("playing")
 			if playing is Dictionary:
 				var join := UI.button(L.t("join_friend"), "mint", 50)
-				join.pressed.connect(func(): _menu().play(str(playing.server_id)))
+				join.pressed.connect(func(): _menu().play(str(playing.server_id), str(playing.get("game", "playground"))))
 				row.add_child(join)
 			var rm := UI.button(L.t("remove"), "ghost", 50)
 			rm.pressed.connect(func(): _remove(u))

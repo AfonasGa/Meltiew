@@ -86,11 +86,15 @@ static func accessories(parent: Node, current: Array, done: Callable) -> void:
 		n.custom_minimum_size.x = 96
 		n.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		col.add_child(n)
+		# `worn` is changed in place: a lambda that assigns to a captured local only
+		# changes its own copy, so picking one did nothing anywhere else.
 		b.pressed.connect(func():
 			if id in worn:
 				worn.erase(id)
 			else:
-				worn = Accessories.wear(worn, id)
+				var next: Array = Accessories.wear(worn, id)
+				worn.clear()
+				worn.append_array(next)
 			refresh.call())
 		grid.add_child(b)
 		buttons[id] = b
@@ -98,7 +102,7 @@ static func accessories(parent: Node, current: Array, done: Callable) -> void:
 	var row := UI.hbox(8)
 	var clear := UI.button(L.t("acc_take_off"), "ghost", 44)
 	clear.pressed.connect(func():
-		worn = []
+		worn.clear()
 		refresh.call())
 	row.add_child(clear)
 	var ok := UI.button(L.t("done"), "primary", 44)

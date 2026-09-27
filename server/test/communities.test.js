@@ -151,3 +151,55 @@ test('community places: builders edit together; saving over a newer save asks fi
   r = await call('GET', `/api/places/${place.id}`, null, users.kid);
   assert.equal(r.data.place.community, undefined);
 });
+
+// Its own community with a place (the one above is deleted at the end of its test).
+async function bankCommunity() {
+  app.db.prepare('UPDATE users SET pieces = pieces + 20 WHERE id = ?').run(ids.boss);
+  let r = await call('POST', '/api/communities', { name: 'Bank Crew ' + Math.random().toString(36).slice(2, 6), currency: 'pieces' }, users.boss);
+  assert.equal(r.status, 200, r.raw);
+  const cid = r.data.community.id;
+  for (const who of ['builder', 'fan']) await call('POST', `/api/communities/${cid}/join`, null, users[who]);
+  r = await call('POST', '/api/studio/places', { name: 'Shop obby', community_id: cid }, users.boss);
+  assert.equal(r.status, 200, r.raw);
+  return { cid, placeId: r.data.place.id };
+}
+
+test('community bank: sales in its places go there, the owner pays members out', async () => {
+  const { cid, placeId } = await bankCommunity();
+  let r;
+  r = await call('POST', `/api/studio/places/${placeId}/passes`, { name: 'VIP', price: 100 }, users.boss);
+  assert.equal(r.status, 200, r.raw);
+  const passId = r.data.pass.id;
+  const pieces = (who) => app.db.prepare('SELECT pieces FROM users WHERE id = ?').get(ids[who]).pieces;
+  const bossBefore = pieces('boss');
+  app.db.prepare('UPDATE users SET pieces = 500 WHERE id = ?').run(ids.kid);
+  assert.equal((await call('POST', `/api/passes/${passId}/buy`, null, users.kid)).status, 200);
+  assert.equal(pieces('boss'), bossBefore, 'the sale went to the bank, not to a person');
+  r = await call('GET', `/api/communities/${cid}/bank`, null, users.builder);
+  assert.equal(r.data.bank, 95);
+  assert.equal(r.data.can_pay, false);
+  assert.equal(r.data.log[0].reason, 'gamepass_sale');
+  // Outsiders don't see it; only the owner (or a role with "bank") pays.
+  assert.equal((await call('GET', `/api/communities/${cid}/bank`, null, users.kid)).status, 403);
+  assert.equal((await call('POST', `/api/communities/${cid}/bank/pay`, { payouts: [{ user_id: ids.builder, amount: 10 }] }, users.builder)).status, 403);
+  assert.equal((await call('POST', `/api/communities/${cid}/bank/pay`, { payouts: [{ user_id: ids.kid, amount: 1 }] }, users.boss)).data.error, 'not_a_member');
+  assert.equal((await call('POST', `/api/communities/${cid}/bank/pay`, { payouts: [{ user_id: ids.builder, amount: 96 }] }, users.boss)).status, 402);
+  // Split between two developers.
+  const builderBefore = pieces('builder');
+  r = await call('POST', `/api/communities/${cid}/bank/pay`, { payouts: [{ user_id: ids.builder, amount: 50 }, { user_id: ids.fan, amount: 45 }] }, users.boss);
+  assert.equal(r.status, 200, r.raw);
+  assert.equal(r.data.bank, 0);
+  assert.equal(pieces('builder') - builderBefore, 50);
+});
+
+test('community channels can be moved around', async () => {
+  const { cid } = await bankCommunity();
+  let r;
+  await call('POST', `/api/communities/${cid}/channels`, { name: 'memes' }, users.boss);
+  r = await call('GET', `/api/communities/${cid}`, null, users.boss);
+  const last = r.data.community.channels.at(-1);
+  assert.equal(last.name, 'memes');
+  assert.equal((await call('PATCH', `/api/communities/${cid}/channels/${last.id}`, { position: 0 }, users.fan)).status, 403);
+  r = await call('PATCH', `/api/communities/${cid}/channels/${last.id}`, { position: 0 }, users.boss);
+  assert.equal(r.data.community.channels[0].name, 'memes');
+});

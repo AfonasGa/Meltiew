@@ -150,7 +150,8 @@
    "T_T",
    "-_-",
    ":|",
-   "<3"
+   "<3",
+   ">:)"
   ],
   "EmoteSlot": [
    "wave",
@@ -159,6 +160,23 @@
    "sit",
    "clap",
    "laugh"
+  ],
+  "HighlightDepthMode": [
+   "AlwaysOnTop",
+   "Occluded"
+  ],
+  "ParticleShape": [
+   "Box",
+   "Sphere",
+   "Point"
+  ],
+  "EmitDirection": [
+   "Top",
+   "Bottom",
+   "Front",
+   "Back",
+   "Left",
+   "Right"
   ]
  },
  "classes": {
@@ -405,6 +423,12 @@
     "AntiCheat": {
      "type": "bool",
      "default": true
+    },
+    "PlayerSyncRange": {
+     "type": "number",
+     "default": 0,
+     "min": 0,
+     "max": 5000
     }
    },
    "events": [],
@@ -487,6 +511,10 @@
      "default": 14.0,
      "min": 0.5,
      "max": 100
+    },
+    "SyncAll": {
+     "type": "bool",
+     "default": false
     }
    },
    "events": [
@@ -595,6 +623,70 @@
     "EmotesEnabled": {
      "type": "bool",
      "default": true
+    },
+    "Floating": {
+     "type": "bool",
+     "default": false
+    },
+    "HeadAngle": {
+     "type": "Vector3",
+     "default": {
+      "$v3": [
+       0,
+       0,
+       0
+      ]
+     }
+    },
+    "TorsoAngle": {
+     "type": "Vector3",
+     "default": {
+      "$v3": [
+       0,
+       0,
+       0
+      ]
+     }
+    },
+    "LeftArmAngle": {
+     "type": "Vector3",
+     "default": {
+      "$v3": [
+       0,
+       0,
+       0
+      ]
+     }
+    },
+    "RightArmAngle": {
+     "type": "Vector3",
+     "default": {
+      "$v3": [
+       0,
+       0,
+       0
+      ]
+     }
+    },
+    "LeftLegAngle": {
+     "type": "Vector3",
+     "default": {
+      "$v3": [
+       0,
+       0,
+       0
+      ]
+     }
+    },
+    "RightLegAngle": {
+     "type": "Vector3",
+     "default": {
+      "$v3": [
+       0,
+       0,
+       0
+      ]
+     }
     }
    },
    "events": [
@@ -1859,6 +1951,66 @@
     "Visible": {
      "type": "bool",
      "default": true
+    },
+    "HeadAngle": {
+     "type": "Vector3",
+     "default": {
+      "$v3": [
+       0,
+       0,
+       0
+      ]
+     }
+    },
+    "TorsoAngle": {
+     "type": "Vector3",
+     "default": {
+      "$v3": [
+       0,
+       0,
+       0
+      ]
+     }
+    },
+    "LeftArmAngle": {
+     "type": "Vector3",
+     "default": {
+      "$v3": [
+       0,
+       0,
+       0
+      ]
+     }
+    },
+    "RightArmAngle": {
+     "type": "Vector3",
+     "default": {
+      "$v3": [
+       0,
+       0,
+       0
+      ]
+     }
+    },
+    "LeftLegAngle": {
+     "type": "Vector3",
+     "default": {
+      "$v3": [
+       0,
+       0,
+       0
+      ]
+     }
+    },
+    "RightLegAngle": {
+     "type": "Vector3",
+     "default": {
+      "$v3": [
+       0,
+       0,
+       0
+      ]
+     }
     }
    },
    "events": [],
@@ -1992,6 +2144,372 @@
    "category": "Logic",
    "creatable": true,
    "doc": "How players look **in this place only**: body colors, a **Face** and any **Accessories** (even ones they don't own), without touching their real avatar. Put one in StarterPlayer and everyone wears it when they join; turn on **KeepColors**, **KeepFace** or **KeepAccessories** to leave that part as the player's own. From a Script: `player:ApplyAppearance(app)` dresses one player, `player:ResetAppearance()` gives their own look back, and `game.Players:GetAppearanceAsync(player.UserId)` returns an Appearance with what they wear now, to change and apply."
+  },
+  "Highlight": {
+   "base": "Instance",
+   "props": {
+    "Enabled": {
+     "type": "bool",
+     "default": true
+    },
+    "FillColor": {
+     "type": "Color3",
+     "default": {
+      "$c3": "#ff3b4f"
+     }
+    },
+    "FillTransparency": {
+     "type": "number",
+     "default": 0.5,
+     "min": 0,
+     "max": 1
+    },
+    "OutlineColor": {
+     "type": "Color3",
+     "default": {
+      "$c3": "#ffffff"
+     }
+    },
+    "OutlineTransparency": {
+     "type": "number",
+     "default": 0.0,
+     "min": 0,
+     "max": 1
+    },
+    "DepthMode": {
+     "type": "enum:HighlightDepthMode",
+     "default": "AlwaysOnTop"
+    }
+   },
+   "events": [],
+   "icon": "star",
+   "category": "3D",
+   "creatable": true,
+   "doc": "Outlines and tints what it's inside: a Part, a Model, a player's character or a Rig. With **DepthMode** AlwaysOnTop it shows through walls."
+  },
+  "BillboardGui": {
+   "base": "Instance",
+   "props": {
+    "Enabled": {
+     "type": "bool",
+     "default": true
+    },
+    "Size": {
+     "type": "UDim2",
+     "default": {
+      "$u2": [
+       0,
+       200,
+       0,
+       50
+      ]
+     }
+    },
+    "StudsOffset": {
+     "type": "Vector3",
+     "default": {
+      "$v3": [
+       0,
+       2,
+       0
+      ]
+     }
+    },
+    "AlwaysOnTop": {
+     "type": "bool",
+     "default": false
+    },
+    "MaxDistance": {
+     "type": "number",
+     "default": 100.0,
+     "min": 1,
+     "max": 2000
+    }
+   },
+   "events": [],
+   "icon": "eye",
+   "category": "GUI",
+   "creatable": true,
+   "doc": "A GUI that floats over the Part or Model it's in and always faces the camera: put Frames, TextLabels and ImageLabels in it. **Size** is in pixels; **StudsOffset** lifts it; with **AlwaysOnTop** off, walls hide it."
+  },
+  "ProximityPrompt": {
+   "base": "Instance",
+   "props": {
+    "Enabled": {
+     "type": "bool",
+     "default": true
+    },
+    "ActionText": {
+     "type": "string",
+     "default": "Interact"
+    },
+    "ObjectText": {
+     "type": "string",
+     "default": ""
+    },
+    "KeyboardKeyCode": {
+     "type": "string",
+     "default": "E"
+    },
+    "HoldDuration": {
+     "type": "number",
+     "default": 0.0,
+     "min": 0,
+     "max": 30
+    },
+    "MaxActivationDistance": {
+     "type": "number",
+     "default": 10.0,
+     "min": 1,
+     "max": 100
+    }
+   },
+   "events": [
+    "Triggered"
+   ],
+   "icon": "hand",
+   "category": "3D",
+   "creatable": true,
+   "doc": "Put it in a Part: players who come close see \"[E] ActionText\" and press (or hold for **HoldDuration** seconds) to use it; on phones they tap it. **Triggered**(player) fires on the server, and in the player's own LocalScripts."
+  },
+  "ParticleEmitter": {
+   "base": "Instance",
+   "props": {
+    "Enabled": {
+     "type": "bool",
+     "default": true
+    },
+    "Rate": {
+     "type": "number",
+     "default": 20.0,
+     "min": 0,
+     "max": 400
+    },
+    "LifetimeMin": {
+     "type": "number",
+     "default": 1.0,
+     "min": 0.05,
+     "max": 20
+    },
+    "LifetimeMax": {
+     "type": "number",
+     "default": 2.0,
+     "min": 0.05,
+     "max": 20
+    },
+    "SpeedMin": {
+     "type": "number",
+     "default": 4.0,
+     "min": 0,
+     "max": 200
+    },
+    "SpeedMax": {
+     "type": "number",
+     "default": 6.0,
+     "min": 0,
+     "max": 200
+    },
+    "SpreadAngle": {
+     "type": "number",
+     "default": 15.0,
+     "min": 0,
+     "max": 180
+    },
+    "EmitDirection": {
+     "type": "enum:EmitDirection",
+     "default": "Top"
+    },
+    "Shape": {
+     "type": "enum:ParticleShape",
+     "default": "Box"
+    },
+    "Acceleration": {
+     "type": "Vector3",
+     "default": {
+      "$v3": [
+       0,
+       0,
+       0
+      ]
+     }
+    },
+    "Drag": {
+     "type": "number",
+     "default": 0.0,
+     "min": 0,
+     "max": 20
+    },
+    "Color": {
+     "type": "Color3",
+     "default": {
+      "$c3": "#ffffff"
+     }
+    },
+    "ColorEnd": {
+     "type": "Color3",
+     "default": {
+      "$c3": "#ffffff"
+     }
+    },
+    "Transparency": {
+     "type": "number",
+     "default": 0.0,
+     "min": 0,
+     "max": 1
+    },
+    "TransparencyEnd": {
+     "type": "number",
+     "default": 1.0,
+     "min": 0,
+     "max": 1
+    },
+    "Size": {
+     "type": "number",
+     "default": 1.0,
+     "min": 0.02,
+     "max": 50
+    },
+    "SizeEnd": {
+     "type": "number",
+     "default": 1.0,
+     "min": 0,
+     "max": 50
+    },
+    "Rotation": {
+     "type": "number",
+     "default": 0.0,
+     "min": 0,
+     "max": 360
+    },
+    "RotSpeed": {
+     "type": "number",
+     "default": 0.0,
+     "min": -1000,
+     "max": 1000
+    },
+    "Texture": {
+     "type": "asset",
+     "default": ""
+    },
+    "LightEmission": {
+     "type": "number",
+     "default": 0.0,
+     "min": 0,
+     "max": 1
+    },
+    "LockedToPart": {
+     "type": "bool",
+     "default": false
+    }
+   },
+   "events": [],
+   "icon": "star",
+   "category": "3D",
+   "creatable": true,
+   "doc": "Sparks, smoke, snow, confetti: particles from the Part (or character) it's in. **Rate** per second; each lives **LifetimeMin**-**LifetimeMax** seconds and fades from **Color**/**Transparency**/**Size** to the *End* values. **Texture** is one of your uploaded images (a soft dot without one). **LightEmission** 1 makes them glow. `:Emit(n)` throws out a burst."
+  },
+  "Trail": {
+   "base": "Instance",
+   "props": {
+    "Enabled": {
+     "type": "bool",
+     "default": true
+    },
+    "Lifetime": {
+     "type": "number",
+     "default": 0.6,
+     "min": 0.05,
+     "max": 10
+    },
+    "Width": {
+     "type": "number",
+     "default": 1.0,
+     "min": 0,
+     "max": 20
+    },
+    "WidthEnd": {
+     "type": "number",
+     "default": 0.0,
+     "min": 0,
+     "max": 20
+    },
+    "Color": {
+     "type": "Color3",
+     "default": {
+      "$c3": "#ffffff"
+     }
+    },
+    "ColorEnd": {
+     "type": "Color3",
+     "default": {
+      "$c3": "#ffffff"
+     }
+    },
+    "Transparency": {
+     "type": "number",
+     "default": 0.2,
+     "min": 0,
+     "max": 1
+    },
+    "TransparencyEnd": {
+     "type": "number",
+     "default": 1.0,
+     "min": 0,
+     "max": 1
+    },
+    "Texture": {
+     "type": "asset",
+     "default": ""
+    },
+    "LightEmission": {
+     "type": "number",
+     "default": 0.0,
+     "min": 0,
+     "max": 1
+    },
+    "Offset": {
+     "type": "Vector3",
+     "default": {
+      "$v3": [
+       0,
+       0,
+       0
+      ]
+     }
+    }
+   },
+   "events": [],
+   "icon": "run",
+   "category": "3D",
+   "creatable": true,
+   "doc": "A ribbon left behind by the Part or character it's in as it moves, fading over **Lifetime** seconds from **Width**/**Color** to the *End* values. **Offset** moves where it comes from."
+  },
+  "DynamicImage": {
+   "base": "Instance",
+   "props": {
+    "Width": {
+     "type": "number",
+     "default": 64.0,
+     "min": 1,
+     "max": 128
+    },
+    "Height": {
+     "type": "number",
+     "default": 64.0,
+     "min": 1,
+     "max": 128
+    },
+    "Data": {
+     "type": "string",
+     "default": "",
+     "readonly": true
+    }
+   },
+   "events": [],
+   "icon": "star",
+   "category": "Logic",
+   "creatable": true,
+   "doc": "A picture your scripts draw, pixel by pixel (up to 128x128): `:Fill`, `:SetPixel`, `:DrawRect`, `:DrawCircle`, `:DrawLine`, `:Clear`, `:GetPixel`. Show it with `label.Image = img:GetContent()` (also a Part's or a ParticleEmitter's Texture). Drawn on the server, everyone sees it; in a LocalScript, only you."
   }
  },
  "services": [

@@ -5,7 +5,7 @@ extends VBoxContainer
 ## with their roles, its places, and for its managers the settings.
 
 const COLORS := ["#b79cff", "#7ee0c3", "#4cc9f0", "#ffb86b", "#ff8fb1", "#ffd166", "#9d7bff", "#6bd6a5"]
-const PERMS := ["manage", "moderate", "places", "post"]
+const PERMS := ["manage", "moderate", "places", "post", "bank"]
 const POLL_SEC := 3.0
 
 var _price := {"pieces": 10, "orbs": 100}
@@ -314,6 +314,9 @@ func _render_community() -> void:
 	var tabs := UI.hbox(8)
 	_tab_buttons = {}
 	var list := [["channels", L.t("cm_channels")], ["members", L.t("cm_people")], ["places", L.t("cm_places")]]
+	# Members see the bank (the balance comes with the community only for them).
+	if _c.has("bank") and _c.bank != null:
+		list.append(["bank", L.t("cm_bank")])
 	if _can("manage"):
 		list.append(["settings", L.t("cm_settings")])
 	for t in list:
@@ -360,6 +363,8 @@ func _set_tab(t: String) -> void:
 			_members_tab()
 		"places":
 			_places_tab()
+		"bank":
+			_bank_tab()
 		"settings":
 			_settings_tab()
 
@@ -607,6 +612,103 @@ func _places_tab() -> void:
 		flow.add_child(HomePage.place_card(p, func(): _menu().open_place(pid)))
 
 
+# --- bank -------------------------------------------------------------------------------
+
+## The balance, what came in and went out, and (for the owner or a role with "bank")
+## paying members: an amount next to each, one or several at once.
+func _bank_tab() -> void:
+	var scroll := ScrollContainer.new()
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	var v := UI.vbox(12)
+	v.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scroll.add_child(v)
+	_content.add_child(scroll)
+	v.add_child(Loading.spinner(30))
+	var cid := int(_c.id)
+	var r := await Api.request("GET", "/api/communities/%d/bank" % cid)
+	if not is_instance_valid(v):
+		return
+	for ch in v.get_children():
+		ch.queue_free()
+	if not r.ok:
+		v.add_child(UI.label(r.message, 16, UI.MUTED))
+		return
+	var bank := int(r.data.get("bank", 0))
+	var head := UI.card(16, UI.CARD, 18)
+	var hv := UI.vbox(4)
+	head.add_child(hv)
+	var bal := UI.hbox(10)
+	bal.add_child(Icon.make("piece", 34, Economy.PIECE_COLOR))
+	bal.add_child(UI.label(str(bank), 34, UI.TEXT, "black"))
+	hv.add_child(bal)
+	var about := UI.label(L.t("cm_bank_about"), 15, UI.MUTED)
+	about.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	hv.add_child(about)
+	v.add_child(head)
+
+	if r.data.get("can_pay", false) and bank > 0:
+		v.add_child(UI.label(L.t("cm_bank_pay"), 20, UI.TEXT, "bold"))
+		var mr := await Api.request("GET", "/api/communities/%d/members" % cid)
+		if not is_instance_valid(v):
+			return
+		var amounts := {}
+		var pay := UI.button(L.t("cm_bank_pay"), "primary", 50)
+		pay.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+		var update_total := func():
+			var total := 0
+			for uid in amounts:
+				total += int(amounts[uid].value)
+			pay.text = L.t("cm_bank_pay_total", [total])
+			pay.disabled = total <= 0 or total > bank
+		for m in (mr.data.get("members", []) if mr.ok else []):
+			var row := UI.hbox(12)
+			row.add_child(UI.avatar_badge(m, 40))
+			var nm := UI.name_row(m, 17)
+			nm.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			row.add_child(nm)
+			var amount := SpinBox.new()
+			amount.min_value = 0
+			amount.max_value = bank
+			amount.custom_minimum_size.x = 130
+			amount.value_changed.connect(func(_x): update_total.call())
+			amounts[int(m.id)] = amount
+			row.add_child(amount)
+			v.add_child(row)
+		update_total.call()
+		pay.pressed.connect(func():
+			var payouts := []
+			for uid in amounts:
+				if int(amounts[uid].value) > 0:
+					payouts.append({"user_id": uid, "amount": int(amounts[uid].value)})
+			pay.disabled = true
+			var pr := await Api.request("POST", "/api/communities/%d/bank/pay" % cid, {"payouts": payouts})
+			if pr.ok:
+				UI.toast(L.t("cm_bank_paid"), "ok")
+				if pr.data.get("wallet") is Dictionary:
+					Economy.set_wallet(pr.data.wallet)
+				_set_tab("bank")
+			else:
+				UI.toast(pr.message, "error")
+				pay.disabled = false)
+		v.add_child(pay)
+
+	v.add_child(UI.label(L.t("cm_bank_history"), 20, UI.TEXT, "bold"))
+	var log: Array = r.data.get("log", [])
+	if log.is_empty():
+		v.add_child(UI.label(L.t("cm_bank_empty"), 16, UI.MUTED))
+	for e in log:
+		var row := UI.hbox(10)
+		var delta := int(e.get("delta", 0))
+		var who: Variant = e.get("user")
+		var what := L.t("cm_bank_sale") if str(e.get("reason", "")) == "gamepass_sale" else L.t("cm_bank_payout", [str(who.display_name) if who is Dictionary else "?"])
+		var l := UI.label(what, 16, UI.TEXT)
+		l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		row.add_child(l)
+		row.add_child(UI.label(("+" if delta > 0 else "") + str(delta), 17, UI.MINT if delta > 0 else UI.PINK, "black"))
+		v.add_child(row)
+
+
 # --- settings (managers) ----------------------------------------------------------------
 
 func _settings_tab() -> void:
@@ -667,11 +769,23 @@ func _settings_tab() -> void:
 
 	# Channels.
 	v.add_child(UI.label(L.t("cm_channels"), 20, UI.TEXT, "bold"))
-	for ch in _c.get("channels", []):
+	var chans: Array = _c.get("channels", [])
+	for i in chans.size():
+		var ch: Dictionary = chans[i]
 		var row := UI.hbox(8)
 		var cn := UI.label("# " + str(ch.name), 17, UI.TEXT, "bold")
 		cn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		row.add_child(cn)
+		# Order in the list: up and down one place.
+		for step in [-1, 1]:
+			var mv := UI.button("▲" if step < 0 else "▼", "ghost", 44)
+			mv.custom_minimum_size.x = 44
+			mv.tooltip_text = L.t("cm_move_up" if step < 0 else "cm_move_down")
+			mv.disabled = i + step < 0 or i + step >= chans.size()
+			var mid := int(ch.id)
+			var to: int = i + step
+			mv.pressed.connect(func(): _act("PATCH", "/api/communities/%d/channels/%d" % [cid, mid], {"position": to}))
+			row.add_child(mv)
 		var pr := SpinBox.new()
 		pr.min_value = 1
 		pr.max_value = 255

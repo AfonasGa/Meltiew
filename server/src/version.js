@@ -1,8 +1,17 @@
 // App version gate: clients older than the minimum are turned away with 426.
 // The minimum defaults to the release this server ships with and can be raised
 // at runtime from the admin panel (stored in the config table).
-export const LATEST_CLIENT = '1.6.1';
+export const LATEST_CLIENT = '1.7.0';
 export const DOWNLOAD_PAGE = 'https://meltiew.narez.xyz/download';
+
+// Every published app is exported with this Godot. A different engine in the app's
+// User-Agent means someone built their own (with cheats in it).
+export const CLIENT_ENGINE = '4.7.2';
+
+function officialEngine(userAgent) {
+  const m = /^GodotEngine\/(\d+\.\d+(?:\.\d+)?)/.exec(String(userAgent));
+  return !m || m[1] === CLIENT_ENGINE;
+}
 
 export function compareVersions(a, b) {
   const pa = String(a || '0').split('.').map((n) => parseInt(n, 10) || 0);
@@ -31,7 +40,8 @@ export function createVersionGate(db) {
       if (client === 'web') return true;
       const isApp = client === 'app' || /^GodotEngine\//.test(String(userAgent));
       if (!isApp) return true;
-      return compareVersions(version, this.min()) >= 0;
+      // Newer than the newest release: a build nobody published (a modified client).
+      return compareVersions(version, this.min()) >= 0 && compareVersions(version, LATEST_CLIENT) <= 0;
     },
     /**
      * The HTTP API stays open to every app that reports its version, so an old
@@ -41,7 +51,7 @@ export function createVersionGate(db) {
     allowsHttp(client, version, userAgent = '') {
       if (client === 'web') return true;
       const isApp = client === 'app' || /^GodotEngine\//.test(String(userAgent));
-      return !isApp || !!version;
+      return !isApp || (!!version && compareVersions(version, LATEST_CLIENT) <= 0 && officialEngine(userAgent));
     },
   };
 }

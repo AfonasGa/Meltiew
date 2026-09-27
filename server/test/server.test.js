@@ -473,3 +473,38 @@ test('anti-fraud: five sign-ups per address a day, only players rate a place', a
   assert.equal(r.data.error, 'play_first');
   assert.equal((await call('POST', '/api/places/playground/vote', { value: 0 }, farm.data.token)).status, 200);
 });
+
+test('apps built with another Godot than the published ones are turned away', async () => {
+  const get = (ua) => fetch(base + '/api/places', { headers: { 'user-agent': ua, 'x-client-version': CLIENT } }).then((r) => r.status);
+  assert.equal(await get('GodotEngine/4.7.1.stable.official (Windows)'), 426);
+  assert.notEqual(await get('GodotEngine/4.7.2.stable.official (Android)'), 426);
+});
+
+test('hug: taking open arms puts you face to face; only near someone waiting for one', async () => {
+  const a = await connect(users.alice);
+  a.send2({ t: 'join', server: 'new' });
+  const wa = await a.next((m) => m.t === 'welcome');
+  const login = await call('POST', '/api/login', { username: 'p1x', password: 'secret123' });
+  const b = await connect(login.data.token);
+  b.send2({ t: 'join', server: wa.server.id });
+  const wb = await b.next((m) => m.t === 'welcome');
+  const got = [];
+  b.on('message', (raw) => { const m = JSON.parse(raw.toString()); if (m.t === 'hug') got.push(m); });
+  // Not waiting for a hug yet: nothing happens.
+  a.send2({ t: 'state', p: [0, 0.6, 15.5], r: 0, a: 'idle' });
+  b.send2({ t: 'state', p: [2, 0.6, 15.5], r: 0, a: 'idle' });
+  await new Promise((res) => setTimeout(res, 150));
+  b.send2({ t: 'hug', id: wa.you });
+  await new Promise((res) => setTimeout(res, 150));
+  assert.equal(got.length, 0);
+  // Arms open: b is put in front of a (a faces -Z at yaw 0) and both hug.
+  a.send2({ t: 'state', p: [0, 0.6, 15.5], r: 0, a: 'hug' });
+  await new Promise((res) => setTimeout(res, 150));
+  b.send2({ t: 'hug', id: wa.you });
+  const mine = await a.next((m) => m.t === 'hug');
+  assert.equal(mine.with, wb.you);
+  await new Promise((res) => setTimeout(res, 100));
+  assert.deepEqual(got[0].pos, [0, 0.6, 14]);
+  a.close();
+  b.close();
+});

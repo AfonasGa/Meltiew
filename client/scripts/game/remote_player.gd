@@ -7,6 +7,8 @@ const DELAY_MS := 120.0
 
 var user: Dictionary = {}
 var avatar: MellyAvatar
+## What they are doing now ("hug": waiting for a hug).
+var current_anim := ""
 var _snaps: Array = []  # [local_ms, pos, yaw, anim]
 var _name_tag: Label3D
 var _role_tag: Label3D
@@ -108,6 +110,7 @@ func _process(delta: float) -> void:
 		global_position = pos
 		avatar.rotation.y = lerp_angle(avatar.rotation.y, yaw, minf(delta * 16.0, 1.0))
 		var anim: String = a[3]
+		current_anim = anim
 		if anim == "dead":
 			shatter()
 		elif not _dead or a[0] > _dead_at:

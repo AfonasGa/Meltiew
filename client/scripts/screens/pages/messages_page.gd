@@ -26,7 +26,11 @@ func _ready() -> void:
 	var left := UI.vbox(12)
 	left.custom_minimum_size.x = 280 if get_viewport_rect().size.x < 1120.0 else 330
 	add_child(left)
-	left.add_child(UI.label(L.t("messages"), 34, UI.TEXT, "black"))
+	var menu: Node = get_meta("menu") if has_meta("menu") else null
+	if menu and menu.has_method("section_switch"):
+		left.add_child(menu.section_switch("messages"))
+	else:
+		left.add_child(UI.label(L.t("messages"), 34, UI.TEXT, "black"))
 	var tabs := UI.hbox(8)
 	for t in [["chats", L.t("chats")], ["requests", L.t("dm_requests")]]:
 		var b := UI.button(t[1], "flat", 44)

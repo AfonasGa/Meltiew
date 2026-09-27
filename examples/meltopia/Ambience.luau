@@ -99,29 +99,15 @@ local function want(name, target, dt, speed)
 	s.Volume = v
 end
 
--- How close danger is, 0 (far) to 1 (right here).
+-- How close danger is, 0 (far) to 1 (right here). The server works it out: this app
+-- doesn't know where the other players really are.
+local serverDanger = 0
+RS.Remotes.Danger.OnClientEvent:Connect(function(d)
+	serverDanger = tonumber(d) or 0
+end)
+
 local function danger()
-	local myRoot = me.Character and me.Character:FindFirstChild("HumanoidRootPart")
-	if not myRoot then
-		return 0
-	end
-	local best = math.huge
-	local killerId = State.KillerId.Value
-	for _, p in Players:GetPlayers() do
-		local r = p:FindFirstChild("Role")
-		local other = p.Character and p.Character:FindFirstChild("HumanoidRootPart")
-		if p ~= me and r and other then
-			-- Survivors fear the killer; the killer hunts the nearest survivor.
-			local counts = (role() == "survivor" and p.UserId == killerId) or (role() == "killer" and r.Value == "survivor")
-			if counts then
-				best = math.min(best, (other.Position - myRoot.Position).Magnitude)
-			end
-		end
-	end
-	if best == math.huge then
-		return 0
-	end
-	return math.clamp((42 - best) / 26, 0, 1)
+	return serverDanger
 end
 
 -- ------------------------------------------------------------------------------------

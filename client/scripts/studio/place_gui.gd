@@ -13,6 +13,9 @@ var strings := {}
 var lang := "en"
 ## Studio: clicking selects instead of pressing; everything stays visible.
 var editing := false
+## The root is itself the frame (a BillboardGui): its children are laid out inside
+## this control's size, not as screens of their own.
+var root_is_frame := false
 
 var _controls := {}  # id -> Control (the node's own control)
 var _content := {}  # id -> Control that holds its children (ScrollingFrame canvas)
@@ -252,10 +255,10 @@ func _style(id: String) -> void:
 		var le := ctl as LineEdit
 		for st in ["normal", "focus", "read_only"]:
 			le.add_theme_stylebox_override(st, sb)
-		var txt := str(tree.prop(id, "Text"))
+		var txt := UI.tame(str(tree.prop(id, "Text")))
 		if le.text != txt:
 			le.text = txt
-		le.placeholder_text = localize(str(tree.prop(id, "PlaceholderText")))
+		le.placeholder_text = UI.tame(localize(str(tree.prop(id, "PlaceholderText"))))
 		le.add_theme_color_override("font_color", tree.prop(id, "TextColor"))
 		le.add_theme_font_size_override("font_size", int(tree.prop(id, "TextSize")))
 		le.add_theme_font_override("font", _font(id))
@@ -264,7 +267,7 @@ func _style(id: String) -> void:
 	ctl.add_theme_stylebox_override("panel", sb)
 	var l := ctl.get_node_or_null("Text") as Label
 	if l:
-		l.text = localize(str(tree.prop(id, "Text")))
+		l.text = UI.tame(localize(str(tree.prop(id, "Text"))))
 		var tc: Color = tree.prop(id, "TextColor")
 		tc.a = 1.0 - float(tree.prop(id, "TextTransparency"))
 		l.add_theme_color_override("font_color", tc)
@@ -310,7 +313,9 @@ func _process(_delta: float) -> void:
 		_dirty = true
 	if _dirty and tree:
 		_dirty = false
-		if root_id != "" and tree.has(root_id):
+		if root_is_frame and root_id != "" and tree.has(root_id):
+			_layout_children(root_id, screen)
+		elif root_id != "" and tree.has(root_id):
 			for sg in tree.kids(root_id):
 				if _controls.has(sg):
 					var ctl: Control = _controls[sg]

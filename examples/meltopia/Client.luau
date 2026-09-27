@@ -215,6 +215,9 @@ Remotes.Hit.OnClientEvent:Connect(function(amount)
 	flash.BackgroundTransparency = 0.55
 	tween(flash, 0.6, { BackgroundTransparency = 1 })
 	cam:Shake(3 + amount / 10, 0.35)
+	if role() == "survivor" then
+		toast(Strings.get("n_boost"), MINT)
+	end
 end)
 
 -- ------------------------------------------------------------------------------------
@@ -234,43 +237,116 @@ local function refreshCoins()
 end
 
 -- ------------------------------------------------------------------------------------
--- Characters (inventory): one killer, one survivor for now, with their pictures
+-- Characters (inventory): a tab of killers and a tab of survivors; bought with coins, one of each picked
 -- ------------------------------------------------------------------------------------
 
-local inv = panel({ Size = UDim2.fromOffset(660, 420), Position = UDim2.fromScale(0.5, 0.5), AnchorPoint = Vector2.new(0.5, 0.5), BackgroundColor = INK, BackgroundTransparency = 0.05, Visible = false, ZIndex = 30, Radius = 24 })
+local CARD_W = 270
+local cardCount = math.max(#Shared.CHARACTERS.killers, #Shared.CHARACTERS.survivors)
+local CARD_H = 450
+local inv = panel({ Size = UDim2.fromOffset(22 * 2 + CARD_W * cardCount + 12 * (cardCount - 1), CARD_H + 84), Position = UDim2.fromScale(0.5, 0.5), AnchorPoint = Vector2.new(0.5, 0.5), BackgroundColor = INK, BackgroundTransparency = 0.05, Visible = false, ZIndex = 30, Radius = 24 })
 inv.Parent = gui
-label({ Text = Strings.get("inv_title"), Size = UDim2.new(1, -80, 0, 44), Position = UDim2.fromOffset(22, 12), TextSize = 28, Font = "Black", TextXAlignment = "Left", ZIndex = 31, Parent = inv })
+label({ Text = Strings.get("inv_title"), Size = UDim2.fromOffset(200, 44), Position = UDim2.fromOffset(22, 12), TextSize = 28, Font = "Black", TextXAlignment = "Left", ZIndex = 31, Parent = inv })
+local tabPages, tabButtons = {}, {}
+local function showTab(kind)
+	for k, page in tabPages do
+		page.Visible = k == kind
+		tabButtons[k].BackgroundColor = k == kind and VIOLET or PANEL
+		tabButtons[k].TextColor = k == kind and INK or TEXT
+	end
+end
+for i, kind in { "killer", "survivor" } do
+	tabPages[kind] = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Visible = kind == "killer", ZIndex = 31, Parent = inv })
+	local b = button(Strings.get(kind == "killer" and "inv_killers" or "inv_survivors"), PANEL, { Size = UDim2.fromOffset(120, 38), Position = UDim2.fromOffset(200 + (i - 1) * 128, 16), TextSize = 15, ZIndex = 32, Radius = 12, Parent = inv })
+	b.Activated:Connect(function()
+		showTab(kind)
+	end)
+	tabButtons[kind] = b
+end
 local invClose = button("X", PANEL, { Size = UDim2.fromOffset(44, 44), Position = UDim2.new(1, -58, 0, 14), TextColor = TEXT, ZIndex = 31, Parent = inv })
 invClose.Activated:Connect(function()
 	inv.Visible = false
 end)
 
+local function ownedSet()
+	local out = {}
+	local v = me:FindFirstChild("Owned")
+	for id in string.gmatch(v and v.Value or "", "[^,]+") do
+		out[id] = true
+	end
+	return out
+end
+
+local function myChar(kind)
+	local v = me:FindFirstChild(kind == "killer" and "KillerChar" or "SurvivorChar")
+	return v and v.Value or (kind == "killer" and "nrz" or "melly")
+end
+
+local charButtons = {} -- id -> { button, picked, info, kind }
+
+local function refreshCards()
+	local owned = ownedSet()
+	for id, k in charButtons do
+		local has = k.info.price == 0 or owned[id]
+		local picked = myChar(k.kind)
+		k.picked.Visible = has and picked == id
+		k.button.Visible = not (has and picked == id)
+		k.button.Text = has and Strings.get("btn_equip") or Strings.get("btn_buy", k.info.price)
+		k.button.BackgroundColor = has and VIOLET or GOLD
+	end
+end
+
 local function characterCard(parent, info, kind, x)
 	local color = Color3.fromHex(info.color)
-	local card = panel({ Size = UDim2.fromOffset(300, 340), Position = UDim2.fromOffset(x, 64), BackgroundColor = PANEL, BackgroundTransparency = 0, ZIndex = 31, Radius = 18, Parent = parent })
+	local card = panel({ Size = UDim2.fromOffset(CARD_W, CARD_H), Position = UDim2.fromOffset(x, 64), BackgroundColor = PANEL, BackgroundTransparency = 0, ZIndex = 31, Radius = 18, Parent = parent })
 	stroke(color, 2, 0.4).Parent = card
 	-- The picture (4:3), or a colored stand-in until it's uploaded.
-	local frame = new("Frame", { Size = UDim2.fromOffset(276, 207), Position = UDim2.fromOffset(12, 12), BackgroundColor = color, BackgroundTransparency = 0.6, ZIndex = 32, Parent = card }, { corner(12) })
+	local frame = new("Frame", { Size = UDim2.fromOffset(CARD_W - 24, (CARD_W - 24) * 3 / 4), Position = UDim2.fromOffset(12, 12), BackgroundColor = color, BackgroundTransparency = 0.6, ZIndex = 32, Parent = card }, { corner(12) })
 	local img = Shared.asset(info.image)
 	if img ~= "" then
 		new("ImageLabel", { Image = img, Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, ScaleType = "Crop", ZIndex = 33, Parent = frame }, { corner(12) })
 	else
-		label({ Text = info.name, Size = UDim2.fromScale(1, 1), TextSize = 40, Font = "Black", TextColor = color, ZIndex = 33, Parent = frame })
+		label({ Text = info.name, Size = UDim2.fromScale(1, 1), TextSize = 34, Font = "Black", TextColor = color, ZIndex = 33, Parent = frame })
 	end
-	local tag = panel({ Size = UDim2.fromOffset(110, 26), Position = UDim2.fromOffset(20, 20), BackgroundColor = color, BackgroundTransparency = 0, ZIndex = 34, Radius = 13, Parent = card })
-	label({ Text = Strings.get(kind == "killer" and "tag_killer" or "tag_survivor"), Size = UDim2.fromScale(1, 1), TextSize = 13, Font = "Black", TextColor = INK, ZIndex = 35, Parent = tag })
-	label({ Text = info.name, Size = UDim2.fromOffset(200, 32), Position = UDim2.fromOffset(14, 222), TextSize = 22, Font = "Black", TextXAlignment = "Left", ZIndex = 32, Parent = card })
-	label({ Text = Strings.get("equipped"), Size = UDim2.fromOffset(90, 28), Position = UDim2.fromOffset(196, 224), TextSize = 13, TextColor = color, TextXAlignment = "Right", ZIndex = 32, Parent = card })
-	label({ Text = Strings.get(info.desc), Size = UDim2.fromOffset(272, 36), Position = UDim2.fromOffset(14, 252), TextSize = 13, TextColor = MUTED, Font = "Regular", TextXAlignment = "Left", TextYAlignment = "Top", ZIndex = 32, Parent = card })
+	-- Inside the picture's frame, after the picture: ZIndex adds up from parent to child in
+	-- the app, so a tag beside the frame ended up under the image.
+	local tag = panel({ Size = UDim2.fromOffset(100, 24), Position = UDim2.fromOffset(8, 8), BackgroundColor = color, BackgroundTransparency = 0, ZIndex = 40, Radius = 12, Parent = frame })
+	label({ Text = Strings.get(kind == "killer" and "tag_killer" or "tag_survivor"), Size = UDim2.fromScale(1, 1), TextSize = 12, Font = "Black", TextColor = INK, ZIndex = 1, Parent = tag })
+	local top = 12 + (CARD_W - 24) * 3 / 4 + 6
+	-- Name on its own line, then "Picked" or the Buy / Pick button under it.
+	-- Tall enough for the Black font: a label cuts off a line that doesn't fit whole.
+	label({ Text = info.name, Size = UDim2.fromOffset(CARD_W - 28, 34), Position = UDim2.fromOffset(14, top - 3), TextSize = 20, Font = "Black", TextXAlignment = "Left", ZIndex = 32, Parent = card })
+	local picked = label({ Text = Strings.get("equipped"), Size = UDim2.fromOffset(CARD_W - 28, 30), Position = UDim2.fromOffset(14, top + 30), TextSize = 14, TextColor = color, TextXAlignment = "Left", ZIndex = 32, Parent = card })
+	local b = button("", VIOLET, { Size = UDim2.fromOffset(CARD_W - 28, 32), Position = UDim2.fromOffset(14, top + 30), TextSize = 14, ZIndex = 33, Radius = 10, Parent = card })
+	b.Activated:Connect(function()
+		local has = info.price == 0 or ownedSet()[info.id]
+		Remotes.Shop:FireServer(has and "equip" or "buy", info.id)
+	end)
+	charButtons[info.id] = { button = b, picked = picked, info = info, kind = kind }
+	label({ Text = Strings.get(info.desc), Size = UDim2.fromOffset(CARD_W - 28, 44), Position = UDim2.fromOffset(14, top + 68), TextSize = 12, TextColor = MUTED, Font = "Regular", TextXAlignment = "Left", TextYAlignment = "Top", TextWrapped = true, ZIndex = 32, Parent = card })
 	local lines = {}
 	for _, a in info.abilities do
 		table.insert(lines, Strings.get(a))
 	end
-	label({ Text = table.concat(lines, "\n"), Size = UDim2.fromOffset(272, 48), Position = UDim2.fromOffset(14, 288), TextSize = 12, TextColor = TEXT, Font = "Bold", TextXAlignment = "Left", TextYAlignment = "Top", ZIndex = 32, Parent = card })
+	label({ Text = table.concat(lines, "\n"), Size = UDim2.fromOffset(CARD_W - 28, CARD_H - top - 118), Position = UDim2.fromOffset(14, top + 114), TextSize = 11, TextColor = TEXT, Font = "Bold", TextXAlignment = "Left", TextYAlignment = "Top", TextWrapped = true, ZIndex = 32, Parent = card })
 end
 
-characterCard(inv, Shared.CHARACTERS.killers[1], "killer", 22)
-characterCard(inv, Shared.CHARACTERS.survivors[1], "survivor", 338)
+for i, info in Shared.CHARACTERS.killers do
+	characterCard(tabPages.killer, info, "killer", 22 + (i - 1) * (CARD_W + 12))
+end
+for i, info in Shared.CHARACTERS.survivors do
+	characterCard(tabPages.survivor, info, "survivor", 22 + (i - 1) * (CARD_W + 12))
+end
+showTab("killer")
+refreshCards()
+task.spawn(function()
+	for _, name in { "Owned", "KillerChar", "SurvivorChar" } do
+		local v = me:WaitForChild(name, 15)
+		if v then
+			v.Changed:Connect(refreshCards)
+		end
+	end
+	refreshCards()
+end)
 
 charsBtn.Activated:Connect(function()
 	inv.Visible = not inv.Visible
@@ -519,8 +595,9 @@ end)
 -- The killer's buttons (phones) and keys (computers)
 -- ------------------------------------------------------------------------------------
 
-local cool = { punch = 0, spike = 0 }
-local killerBar = new("Frame", { Size = UDim2.fromOffset(100, 220), Position = UDim2.new(1, -24, 0.5, -40), AnchorPoint = Vector2.new(1, 0.5), BackgroundTransparency = 1, Visible = false, ZIndex = 8, Parent = gui })
+local cool = { punch = 0, spike = 0, fly = 0 }
+local revealUsed = false
+local killerBar = new("Frame", { Size = UDim2.fromOffset(100, 332), Position = UDim2.new(1, -24, 0.5, -40), AnchorPoint = Vector2.new(1, 0.5), BackgroundTransparency = 1, Visible = false, ZIndex = 8, Parent = gui })
 
 local function abilityButton(name, key, y, color)
 	local b = button("", color, { Size = UDim2.fromOffset(96, 96), Position = UDim2.fromOffset(2, y), ZIndex = 9, Radius = 48, Parent = killerBar })
@@ -533,6 +610,75 @@ end
 
 local punchBtn, punchShade = abilityButton("ab_btn_punch", "LMB / F", 0, RED)
 local spikeBtn, spikeShade = abilityButton("ab_btn_spike", "E", 112, Color3.fromHex("#ff8a3d"))
+local flyBtn, flyShade = abilityButton("ab_btn_fly", "E", 112, Color3.fromHex("#ff2a48"))
+local revealBtn, revealShade = abilityButton("ab_btn_reveal", "C", 224, VIOLET)
+
+-- Alt's turret (survivors): Q or the button, bottom right.
+local turretReady = 0
+local turretBtn = button("", Color3.fromHex("#4cc9f0"), { Size = UDim2.fromOffset(96, 96), Position = UDim2.new(1, -24, 1, -130), AnchorPoint = Vector2.new(1, 1), Visible = false, ZIndex = 9, Radius = 48, Parent = gui })
+stroke(TEXT, 3, 0.6).Parent = turretBtn
+label({ Text = Strings.get("ab_btn_turret"), Size = UDim2.new(1, 0, 0, 24), Position = UDim2.fromOffset(0, 26), TextSize = 15, Font = "Black", TextColor = INK, ZIndex = 11, Parent = turretBtn })
+label({ Text = touch and "" or "Q", Size = UDim2.new(1, 0, 0, 20), Position = UDim2.fromOffset(0, 52), TextSize = 13, TextColor = INK, ZIndex = 11, Parent = turretBtn })
+local turretShade = new("Frame", { Size = UDim2.fromScale(1, 0), BackgroundColor = INK, BackgroundTransparency = 0.35, ZIndex = 10, Parent = turretBtn }, { corner(48) })
+
+local function isAlt()
+	return role() == "survivor" and inRound() and myChar("survivor") == "alt"
+end
+
+local function placeTurret()
+	if not isAlt() or time() < turretReady then
+		return
+	end
+	-- Wait for the server's answer (it says when the next one is ready).
+	turretReady = time() + 1
+	Remotes.Turret:FireServer()
+end
+turretBtn.Activated:Connect(placeTurret)
+Remotes.Turret.OnClientEvent:Connect(function(wait)
+	turretReady = time() + (tonumber(wait) or 0)
+end)
+
+local function isShadowless()
+	return State.KillerChar.Value == "shadowless"
+end
+
+-- shadowless's flight: E (or the button) lifts you up; then a click or tap picks where to swoop.
+local mouse = me:GetMouse()
+local aiming = false
+local flyHint = panel({ Size = UDim2.fromOffset(300, 44), Position = UDim2.new(0.5, 0, 0.72, 0), AnchorPoint = Vector2.new(0.5, 0.5), BackgroundColor = INK, Visible = false, ZIndex = 12, Parent = gui })
+label({ Text = Strings.get(touch and "fly_hint_touch" or "fly_hint"), Size = UDim2.fromScale(1, 1), TextSize = 18, Font = "Black", TextColor = TEXT, ZIndex = 13, Parent = flyHint })
+
+local function flyUp()
+	if role() ~= "killer" or not inRound() or not isShadowless() or State.Release.Value > 0 or aiming or time() < cool.fly then
+		return
+	end
+	aiming = true
+	cool.fly = time() + Shared.FLY.riseTime + Shared.FLY.hoverMax + Shared.FLY.cooldown
+	Remotes.Fly:FireServer("up")
+	task.delay(Shared.FLY.riseTime + Shared.FLY.hoverMax, function()
+		aiming = false
+	end)
+end
+
+local function flyTo()
+	aiming = false
+	-- The cooldown really starts on landing (the server has the final say).
+	cool.fly = time() + 2 + Shared.FLY.cooldown
+	Remotes.Fly:FireServer("to", mouse.Hit)
+end
+
+-- Sense works once, and only in the last seconds of the round.
+local function canReveal()
+	return role() == "killer" and inRound() and not revealUsed and State.Release.Value <= 0
+		and State.TimeLeft.Value <= Shared.REVEAL.at
+end
+
+local function reveal()
+	if canReveal() then
+		revealUsed = true
+		Remotes.Reveal:FireServer()
+	end
+end
 
 local function aim()
 	local look = cam.LookVector
@@ -571,17 +717,28 @@ end)
 spikeBtn.Activated:Connect(function()
 	killerMove("spike")
 end)
+revealBtn.Activated:Connect(reveal)
+flyBtn.Activated:Connect(flyUp)
 
 UIS.InputBegan:Connect(function(input, onUi)
 	if onUi then
 		return
 	end
 	local k = input.KeyCode
+	-- Up in the air: the next click or tap is where to swoop.
+	if aiming and (input.UserInputType == "MouseButton1" or input.UserInputType == "Touch") then
+		flyTo()
+		return
+	end
 	if k == "F" or (input.UserInputType == "MouseButton1" and role() == "killer" and not touch) then
 		killerMove("punch")
 	elseif k == "E" then
 		if role() == "killer" then
-			killerMove("spike")
+			if isShadowless() then
+				flyUp()
+			else
+				killerMove("spike")
+			end
 		elseif repairBtn.Visible and not current then
 			local gen = nearestGen()
 			if gen then
@@ -589,7 +746,16 @@ UIS.InputBegan:Connect(function(input, onUi)
 			end
 		end
 	elseif k == "Q" then
-		killerMove("spike")
+		if role() == "survivor" then
+			placeTurret()
+		elseif isShadowless() then
+			flyUp()
+		else
+			killerMove("spike")
+		end
+	elseif k == "C" then
+		-- (R resets the character.)
+		reveal()
 	end
 end)
 
@@ -623,7 +789,53 @@ Remotes.Notify.OnClientEvent:Connect(function(key, arg)
 		toast(Strings.get("n_gen_done", arg), MINT)
 	elseif key == "n_released" then
 		toast(Strings.get(role() == "killer" and "n_released_you" or "n_released"), RED)
+	elseif key == "n_bought" then
+		toast(Strings.get("n_bought", arg), GOLD)
+	elseif key == "n_no_coins" then
+		toast(Strings.get("n_no_coins", arg), RED)
+	elseif key == "n_turret" then
+		toast(Strings.get("n_turret", arg), Color3.fromHex("#6bffa8"))
+	elseif key == "n_turret_broken" then
+		toast(Strings.get("n_turret_broken"), RED)
+	elseif key == "n_revealed" then
+		toast(Strings.get("n_revealed"), RED)
+		cam:Shake(2, 0.3)
 	end
+end)
+
+-- Sense: a red marker high over every survivor, above walls and trees, for a few seconds.
+-- It's worn on their head (Text3D inside a character), so it follows them. Only the killer has these.
+Remotes.Reveal.OnClientEvent:Connect(function(list, duration)
+	toast(Strings.get("n_reveal"), VIOLET)
+	local marks = {}
+	for _, p in list or {} do
+		if typeof(p) == "Instance" and p.Character then
+			for _, spec in { { text = "▼", size = 170, y = 16 }, { text = p.DisplayName, size = 60, y = 20 } } do
+				local t = Instance.new("Text3D")
+				t.Text = spec.text
+				t.TextColor = RED
+				t.TextSize = spec.size
+				t.Font = "Black"
+				t.OutlineColor = INK
+				t.Billboard = true
+				t.Position = Vector3.new(0, spec.y, 0)
+				t.Parent = p.Character
+				table.insert(marks, t)
+			end
+		end
+	end
+	-- The fog would swallow markers further than ~90 studs: it lifts while they're up.
+	local Lighting = game.Lighting
+	local fogWas = Lighting.FogEnd
+	Lighting.FogEnd = 1000
+	task.delay(duration or Shared.REVEAL.duration, function()
+		for _, t in marks do
+			t:Destroy()
+		end
+		if Lighting.FogEnd == 1000 then
+			Lighting.FogEnd = fogWas
+		end
+	end)
 end)
 
 Remotes.Sfx.OnClientEvent:Connect(function(name)
@@ -647,12 +859,20 @@ local function onRole()
 		stopWatching()
 		inv.Visible = false
 		local c = Shared.CHARACTERS.killers[1]
-		showBanner(Strings.get("role_killer"), Strings.get("role_killer_goal", c.name), Strings.get(touch and "role_killer_touch" or "role_killer_keys"), RED, 7)
+		revealUsed = false
+		aiming = false
+		cool.fly = 0
+		local fly = isShadowless()
+		c = Shared.killer(State.KillerChar.Value)
+		local hint = (touch and "role_killer_touch" or "role_killer_keys") .. (fly and "_fly" or "")
+		showBanner(Strings.get("role_killer"), Strings.get("role_killer_goal", c.name), Strings.get(hint, Shared.REVEAL.at), Color3.fromHex(c.color), 7)
 	elseif r == "survivor" then
 		stopWatching()
 		inv.Visible = false
-		local c = Shared.CHARACTERS.survivors[1]
-		showBanner(Strings.get("role_survivor"), Strings.get("role_survivor_goal", c.name), Strings.get(touch and "role_survivor_touch" or "role_survivor_keys"), MINT, 7)
+		turretReady = 0
+		local c = Shared.survivor(myChar("survivor"))
+		local hint = (touch and "role_survivor_touch" or "role_survivor_keys") .. (c.id == "alt" and "_alt" or "")
+		showBanner(Strings.get("role_survivor"), Strings.get("role_survivor_goal", c.name), Strings.get(hint), Color3.fromHex(c.color), 7)
 	elseif r == "dead" then
 		closePuzzle()
 		showBanner(Strings.get("caught_title"), Strings.get("caught_sub"), "", RED, 5)
@@ -673,6 +893,44 @@ end
 task.spawn(hookPlayer)
 
 -- ------------------------------------------------------------------------------------
+-- Map vote (bottom middle, in the lobby)
+-- ------------------------------------------------------------------------------------
+
+local mapNames = {}
+for name in Shared.MAPS do
+	table.insert(mapNames, name)
+end
+table.sort(mapNames)
+
+local votePanel = panel({ Size = UDim2.fromOffset(300, 46 + #mapNames * 50), Position = UDim2.new(0.5, 0, 1, -16), AnchorPoint = Vector2.new(0.5, 1), BackgroundColor = INK, Visible = false, ZIndex = 6, Parent = gui })
+label({ Text = Strings.get("vote_title"), Size = UDim2.new(1, 0, 0, 36), Position = UDim2.fromOffset(0, 4), TextSize = 17, Font = "Black", ZIndex = 7, Parent = votePanel })
+local myVote = nil
+local voteButtons = {}
+for i, name in mapNames do
+	local b = button("", PANEL, { Size = UDim2.new(1, -20, 0, 42), Position = UDim2.fromOffset(10, 40 + (i - 1) * 50), TextColor = TEXT, TextSize = 16, ZIndex = 7, Parent = votePanel })
+	b.Activated:Connect(function()
+		myVote = myVote ~= name and name or nil
+		Remotes.Vote:FireServer(name)
+	end)
+	voteButtons[name] = b
+end
+
+local function refreshVote()
+	local lobby = State.Phase.Value == "Lobby" and not inv.Visible
+	votePanel.Visible = lobby
+	if not lobby then
+		myVote = nil
+		return
+	end
+	for name, b in voteButtons do
+		local v = State.Votes:FindFirstChild(name)
+		b.Text = Strings.get(Shared.MAPS[name].title) .. "   " .. tostring(v and v.Value or 0)
+		b.BackgroundColor = myVote == name and MINT or PANEL
+		b.TextColor = myVote == name and INK or TEXT
+	end
+end
+
+-- ------------------------------------------------------------------------------------
 -- Every frame-ish: what to show
 -- ------------------------------------------------------------------------------------
 
@@ -682,23 +940,36 @@ while true do
 	local playing = inRound()
 	local phase = State.Phase.Value
 	side.Visible = not playing
+	refreshVote()
 	watchBtn.Visible = phase == "Round" and not playing
 	stopBtn.Visible = watching ~= nil
 	if watching and (phase ~= "Round" or not watching.Parent) then
 		stopWatching()
 	end
 	killerBar.Visible = playing and r == "killer"
+	flyHint.Visible = aiming and playing
 	if killerBar.Visible then
 		local now = time()
 		punchShade.Size = UDim2.fromScale(1, math.clamp((cool.punch - now) / Shared.PUNCH.cooldown, 0, 1))
 		spikeShade.Size = UDim2.fromScale(1, math.clamp((cool.spike - now) / Shared.SPIKE.cooldown, 0, 1))
+		flyShade.Size = UDim2.fromScale(1, aiming and 0 or math.clamp((cool.fly - now) / Shared.FLY.cooldown, 0, 1))
+		spikeBtn.Visible = not isShadowless()
+		flyBtn.Visible = isShadowless()
 		local frozen = State.Release.Value > 0
 		punchBtn.BackgroundTransparency = frozen and 0.6 or 0
 		spikeBtn.BackgroundTransparency = frozen and 0.6 or 0
+		flyBtn.BackgroundTransparency = frozen and 0.6 or 0
+		local ready = canReveal()
+		revealShade.Size = UDim2.fromScale(1, ready and 0 or 1)
+		revealBtn.BackgroundTransparency = ready and 0 or 0.6
 	end
 	-- Repair button and the open puzzle.
 	local gen = (playing and r == "survivor" and not current) and nearestGen() or nil
 	repairBtn.Visible = gen ~= nil
+	turretBtn.Visible = isAlt()
+	if turretBtn.Visible then
+		turretShade.Size = UDim2.fromScale(1, math.clamp((turretReady - time()) / Shared.TURRET.cooldown, 0, 1))
+	end
 	if gen then
 		repairBtn.Text = Strings.get(touch and "btn_repair_touch" or "btn_repair", genProgress(gen), Shared.GEN_STEPS)
 	end

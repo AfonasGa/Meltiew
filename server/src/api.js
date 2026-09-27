@@ -5,7 +5,7 @@ import { msg, pickLang } from './i18n.js';
 import fs from 'node:fs';
 import { createVersionGate, DOWNLOAD_PAGE, LATEST_CLIENT } from './version.js';
 import { FACES, ageOf, chatRules, validBirthdate } from './age.js';
-import { filterText } from './filter.js';
+import { filterText, tameMarks } from './filter.js';
 import { createStudioRoutes } from './studio/routes.js';
 import { createEconomy, priceOf } from './economy.js';
 import { createBadges } from './badges.js';
@@ -39,7 +39,7 @@ const REG_PER_IP_PER_DAY = 5;
 const LOCAL_IPS = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
 
 function cleanText(value, max) {
-  return String(value ?? '')
+  return tameMarks(value)
     .replace(/[\u0000-\u001f\u007f]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim()
@@ -331,6 +331,16 @@ export function createApi({ db, hub, renderDir, store, owner = process.env.MELTI
     const user = q.userById.get(s.user_id);
     if (!user || user.banned) return null;
     return { user, token };
+  }
+
+  // Addresses banned outright (a cheater making a new account after every ban).
+  const bannedIpsRow = db.prepare("SELECT value FROM config WHERE key = 'banned_ips'");
+  function ipBanned(ip) {
+    try {
+      return JSON.parse(bannedIpsRow.get()?.value || '[]').includes(ip);
+    } catch {
+      return false;
+    }
   }
 
   function requireAuth(req) {
@@ -909,7 +919,7 @@ export function createApi({ db, hub, renderDir, store, owner = process.env.MELTI
       if (!chatRules(user.birthdate).dm) throw new HttpError(403, 'dm_too_young');
       if (!chatRules(other.birthdate).dm) throw new HttpError(403, 'dm_unavailable');
       if (q.blockRow.get(other.id, user.id) || q.blockRow.get(user.id, other.id)) throw new HttpError(403, 'blocked');
-      const text = String(body.text ?? '').replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, '').trim().slice(0, 500);
+      const text = tameMarks(body.text).replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, '').trim().slice(0, 500);
       if (!text) throw bad('empty');
       let state = dmState(user.id, other.id);
       if (state === 'outgoing') throw new HttpError(403, 'dm_wait');
@@ -1051,6 +1061,7 @@ export function createApi({ db, hub, renderDir, store, owner = process.env.MELTI
       res.end(body);
     };
     if (req.method === 'OPTIONS') return send(204, {});
+    if (ipBanned(clientIp(req))) return send(403, { error: 'banned', message: msg('banned', lang) });
     // Apps too old to report their version get a clear "please update" instead of half-working.
     const ungated =
       url.pathname === '/api/health' ||
@@ -1105,5 +1116,5 @@ export function createApi({ db, hub, renderDir, store, owner = process.env.MELTI
     } catch {}
   }
 
-  return { handle, userForToken, blockSet, friendSet, isFriend, countVisit: (id) => pq.visit.run(id), gate, cheatReport, economy, badges };
+  return { handle, userForToken, ipBanned, blockSet, friendSet, isFriend, countVisit: (id) => pq.visit.run(id), gate, cheatReport, economy, badges };
 }

@@ -21,14 +21,17 @@ const CLIPS := {
 	"cheer": ["Cheer", 1.0, 0.15],
 	"sit": ["Sit", 1.0, 0.3],
 	"clap": ["Clap", 1.0, 0.15],
+	"hug": ["HugWait", 1.0, 0.25],
+	"hugging": ["Hug", 1.0, 0.1],
 	"laugh": ["Laugh", 1.0, 0.15],
 	"punch": ["Punch", 1.0, 0.06],
 	"throw": ["Throw", 1.0, 0.06],
 }
 const LAUGH_FACE := "xD"
-const EMOTES := ["wave", "dance", "cheer", "sit", "clap", "laugh"]
-## One-shot moves scripts play (not on the emote wheel); Melly goes back to idle after.
-const ACTIONS := ["punch", "throw"]
+## "clap" left the wheel for "hug", but older apps still send it: it still plays.
+const EMOTES := ["wave", "dance", "cheer", "sit", "clap", "laugh", "hug"]
+## One-shot moves (not looping); Melly goes back to idle after.
+const ACTIONS := ["punch", "throw", "hugging"]
 
 var anim_player: AnimationPlayer
 var _model: Node3D
@@ -44,6 +47,9 @@ const HEAD_TOP := 1.81
 var _skeleton: Skeleton3D
 var _hand: Node3D
 var _hold: HoldArm
+var _joints: JointPose
+## Humanoid / Rig properties -> the bones they turn.
+const JOINT_PROPS := {"HeadAngle": "Head", "TorsoAngle": "Torso", "LeftArmAngle": "ArmL", "RightArmAngle": "ArmR", "LeftLegAngle": "LegL", "RightLegAngle": "LegR"}
 ## True while a Tool is in her right hand: the arm points forward to hold it.
 var holding := false:
 	set(v):
@@ -97,6 +103,9 @@ func _ready() -> void:
 	_hold.bone = skeleton.find_bone("ArmR")
 	_hold.target = 1.0 if holding else 0.0
 	skeleton.add_child(_hold)
+	# Scripts turning joints (Humanoid / Rig *Angle properties), on top of the animation.
+	_joints = JointPose.new()
+	skeleton.add_child(_joints)
 	# Looks may have been set before we entered the tree.
 	set_colors(_look_colors if not _look_colors.is_empty() else Session.DEFAULT_COLORS)
 	var pending: Array = _worn_pending if _worn_pending is Array else []
@@ -276,7 +285,7 @@ func is_emoting() -> bool:
 func _on_anim_finished(anim_name: StringName) -> void:
 	if str(anim_name).begins_with("C") and _current.begins_with("anim://"):
 		custom_finished.emit()
-	if anim_name == &"Punch" or anim_name == &"Throw":
+	if anim_name == &"Punch" or anim_name == &"Throw" or anim_name == &"Hug":
 		_current = ""
 		custom_finished.emit()
 		play("idle")
@@ -299,3 +308,29 @@ class HoldArm extends SkeletonModifier3D:
 		var sk := get_skeleton()
 		var pose := sk.get_bone_pose_rotation(bone)
 		sk.set_bone_pose_rotation(bone, pose.slerp(Quaternion.from_euler(POSE), _amount))
+
+
+## Extra turns on the joints from scripts: { "ArmL": Vector3 degrees, ... }. Added on
+## top of whatever animation plays; zero (or missing) leaves a joint alone.
+func set_joint_angles(angles: Dictionary) -> void:
+	if _joints == null:
+		return
+	var out := {}
+	for bone_name in angles:
+		var v: Variant = angles[bone_name]
+		if v is Vector3 and v != Vector3.ZERO:
+			var b := _skeleton.find_bone(bone_name)
+			if b >= 0:
+				out[b] = Quaternion.from_euler(v * (PI / 180.0))
+	_joints.turns = out
+
+
+class JointPose extends SkeletonModifier3D:
+	var turns := {}  # bone index -> Quaternion
+
+	func _process_modification_with_delta(_delta: float) -> void:
+		if turns.is_empty():
+			return
+		var sk := get_skeleton()
+		for b in turns:
+			sk.set_bone_pose_rotation(b, sk.get_bone_pose_rotation(b) * turns[b])

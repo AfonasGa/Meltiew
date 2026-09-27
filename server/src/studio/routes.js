@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { chatRules } from '../age.js';
 import { MAX_PLACE_PLAYERS } from '../game.js';
-import { filterText } from '../filter.js';
+import { filterText, tameMarks } from '../filter.js';
 import { VISIBILITIES, cleanI18n, decodeImage, templatePlace, validateMelt } from './places.js';
 
 export const ASSET_LIMIT_COUNT = 100;
@@ -395,7 +395,7 @@ export function createStudioRoutes(ctx) {
       if (row.kind === 'studio' && !row.comments_enabled) throw new HttpError(403, 'comments_off');
       if (!chatRules(user.birthdate).chat) throw new HttpError(403, 'dm_too_young');
       if (!writeLimiter.allow('comment:' + user.id)) throw new HttpError(429, 'slow_down');
-      const text = String(body.text ?? '').replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, '').trim().slice(0, 500);
+      const text = tameMarks(body.text).replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, '').trim().slice(0, 500);
       if (!text) throw bad('empty');
       const info = q.insertComment.run(row.id, user.id, text, Date.now());
       return { comment: { id: Number(info.lastInsertRowid), body: text, created_at: Date.now(), author: publicProfile(user), can_delete: true } };

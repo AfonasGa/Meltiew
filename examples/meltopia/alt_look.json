@@ -1,0 +1,12 @@
+{
+  "colors": {
+    "torso": "#4cc9f0",
+    "head": "#4cc9f0",
+    "arm_l": "#000000",
+    "arm_r": "#6c8cff",
+    "leg_l": "#000000",
+    "leg_r": "#4cc9f0"
+  },
+  "face": ":)",
+  "accessories": []
+}

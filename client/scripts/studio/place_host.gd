@@ -9,6 +9,8 @@ signal send(msg: Dictionary)
 signal output(line: Dictionary)
 signal spawn_requested(pos: Vector3)
 signal teleport_requested(pos: Vector3)
+## Player:Glide from the server: fly the character there over `seconds`.
+signal glide_requested(pos: Vector3, seconds: float)
 ## A LocalScript changed the cursor: UserInputService.MouseIcon / MouseIconEnabled / MouseBehavior.
 signal mouse_settings_changed
 ## A script offered a gamepass (MarketplaceService:PromptGamePassPurchase).
@@ -29,6 +31,7 @@ const TIME_LIMIT := 0.1
 var tree := PlaceTree.new()
 var scene: PlaceScene
 var gui: PlaceGui
+var billboards: PlaceBillboards
 var user_id := 0
 var lang := "en"
 var strings := {}
@@ -62,10 +65,23 @@ func start(p_user_id: int, p_lang: String, p_strings: Dictionary, snapshot: Arra
 	scene.strings = strings
 	scene.lang = lang
 	world_parent.add_child(scene)
+	# Pictures scripts draw (DynamicImage): each new set of pixels updates its texture.
+	DynImages.reset()
+	tree.added.connect(_on_dyn_image)
+	tree.changed.connect(func(id: String, key: String):
+		if key == "Data" or key == "Width" or key == "Height":
+			_on_dyn_image(id))
 	scene.bind(tree)
 	_gui_layer = CanvasLayer.new()
 	_gui_layer.layer = 5
 	add_child(_gui_layer)
+	# BillboardGuis first: they float in the world, under the screen's own GUI.
+	billboards = PlaceBillboards.new()
+	billboards.strings = strings
+	billboards.lang = lang
+	_gui_layer.add_child(billboards)
+	billboards.bind(tree, scene)
+	billboards.gui_event.connect(_on_gui_event)
 	gui = PlaceGui.new()
 	gui.theme = UI.theme
 	gui.strings = strings
@@ -118,12 +134,16 @@ func server_ops(ops: Array) -> void:
 				scene.stop_sound(str(op.id))
 			"rig_anim":
 				scene.rig_play(str(op.id), str(op.get("anim", "")))
+			"particles":
+				scene.effects.particles_op(op)
 			"fire":
 				events.append({"e": "fire", "id": op.id, "args": op.get("args", [])})
 			"ret":
 				events.append({"e": "ret", "rid": op.rid, "ok": op.ok, "values": op.get("values", [])})
 			"spawn":
 				spawn_requested.emit(SValue.decode(op.pos))
+			"glide":
+				glide_requested.emit(SValue.decode(op.pos), float(op.get("t", 1.0)))
 			"print":
 				output.emit(op)
 			"prompt_pass":
@@ -151,6 +171,13 @@ func _process(delta: float) -> void:
 		var pg := player_gui()
 		if pg != "":
 			gui.set_root(pg)
+
+
+## A ProximityPrompt used: the server checks and fires Triggered; this app's scripts hear it now.
+func prompt_used(id: String) -> void:
+	send.emit({"t": "prompt", "id": id})
+	if _vm:
+		_call("__dispatch", [{"e": "prompt", "id": id}])
 
 
 ## Called by the game for every part the local character is in contact with.
@@ -250,6 +277,8 @@ func _apply(ops: Array) -> void:
 				scene.stop_sound(str(op.id))
 			"rig_anim":
 				scene.rig_play(str(op.id), str(op.get("anim", "")))
+			"particles":
+				scene.effects.particles_op(op)
 			"fire":
 				send.emit({"t": "remote", "id": op.id, "args": op.get("args", [])})
 			"invoke":
@@ -378,3 +407,8 @@ func close() -> void:
 	if _vm:
 		_vm.close()
 		_vm = null
+
+
+func _on_dyn_image(id: String) -> void:
+	if tree.cls(id) == "DynamicImage" and str(tree.prop(id, "Data")) != "":
+		DynImages.apply(id, int(tree.prop(id, "Width")), int(tree.prop(id, "Height")), str(tree.prop(id, "Data")))

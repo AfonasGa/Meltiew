@@ -114,6 +114,10 @@ var _step_cooldown := 0.0
 ## The owner's admin panel: fly where the camera looks, and a walk speed override (0 = off).
 var flying := false
 var admin_speed := 0.0
+## Humanoid.Floating: hang in the air where you are, no gravity, no walking.
+var floating := false
+## Player:Glide in progress: {from, to, t, dur}, empty when not gliding.
+var _glide := {}
 
 
 func _ready() -> void:
@@ -256,6 +260,12 @@ func _step_up(step: Vector3, wants: Vector3) -> void:
 	var from := global_position
 	global_position = probe.origin - up + Vector3(0, rise + 0.02, 0)
 	_step_offset += from - global_position
+	# The body is up there at once and Melly glides after it. Physics interpolation would
+	# smear the jump over a tick while easing Melly's offset the other way: she bobbed up,
+	# down and up again. Both take their new place now; only the glide is smooth.
+	reset_physics_interpolation()
+	avatar.position = _step_offset
+	avatar.reset_physics_interpolation()
 	_step_cooldown = 0.2
 	velocity.y = maxf(velocity.y, 0.0)
 
@@ -362,6 +372,12 @@ func _set_first_person(on: bool) -> void:
 	camera_mode_changed.emit(on)
 
 
+## Turns the character to face `yaw` at once (a hug puts you face to face).
+func face(yaw: float) -> void:
+	_facing = yaw
+	avatar.rotation.y = yaw
+
+
 func play_emote(e: String) -> void:
 	if dead or not is_on_floor():
 		return
@@ -448,6 +464,7 @@ func respawn_at(pos: Vector3) -> void:
 
 
 func respawn() -> void:
+	_glide = {}
 	global_position = spawn_point + (Vector3.ZERO if server_health else Vector3(randf_range(-2, 2), 0.2, randf_range(-2, 2)))
 	reset_physics_interpolation()
 	# Collide again only once we're really there (not for a step where we were).
@@ -480,6 +497,12 @@ func _physics_process(delta: float) -> void:
 		avatar.position = _step_offset
 	if flying:
 		_fly(delta)
+		return
+	if not _glide.is_empty():
+		_glide_step(delta)
+		return
+	if floating:
+		_hover()
 		return
 	if not on_floor and not climbing:
 		velocity.y = maxf(velocity.y - gravity * delta, -MAX_FALL)
@@ -626,6 +649,44 @@ func _update_camera(delta: float) -> void:
 	_camera_pivot.rotation = Vector3(cam_pitch, cam_yaw, 0) + shake
 	var want := 0.0 if first_person else cam_distance
 	_spring.spring_length = lerpf(_spring.spring_length, want, minf(delta * 12.0, 1.0))
+
+
+## Player:Glide from the server: fly in a straight line to `pos`, easing in and out.
+func glide_to(pos: Vector3, seconds: float) -> void:
+	_glide = {"from": global_position, "to": pos, "t": 0.0, "dur": maxf(seconds, 0.05)}
+	climbing = false
+	velocity = Vector3.ZERO
+
+
+func _glide_step(delta: float) -> void:
+	_fall_speed = 0.0
+	_jump_buffer = 0.0
+	_glide.t += delta
+	var k := clampf(_glide.t / _glide.dur, 0.0, 1.0)
+	var want: Vector3 = _glide.from.lerp(_glide.to, k * k * (3.0 - 2.0 * k))
+	velocity = (want - global_position) / maxf(delta, 0.0001)
+	move_and_slide()
+	var flat: Vector3 = _glide.to - _glide.from
+	flat.y = 0.0
+	if flat.length() > 0.5:
+		_facing = lerp_angle(_facing, atan2(-flat.x, -flat.z), minf(delta * TURN_SPEED, 1.0))
+	avatar.rotation.y = _facing
+	avatar.play("fall")
+	# Done, or a wall is in the way: stop where we are.
+	if k >= 1.0 or global_position.distance_to(want) > 2.5:
+		_glide = {}
+		velocity = Vector3.ZERO
+
+
+## Humanoid.Floating: stay put in the air, facing where the camera looks.
+func _hover() -> void:
+	_fall_speed = 0.0
+	_jump_buffer = 0.0
+	climbing = false
+	velocity = Vector3.ZERO
+	_facing = lerp_angle(_facing, cam_yaw, 0.2)
+	avatar.rotation.y = _facing
+	avatar.play("fall")
 
 
 ## Admin flight: the stick or WASD go where the camera looks, jump / Space / E rise, Q sinks.

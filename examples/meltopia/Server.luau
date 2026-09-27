@@ -8,6 +8,8 @@ local Shared = require(RS.Shared)
 local State = RS.State
 local Remotes = RS.Remotes
 local Coins = game:GetService("DataStoreService"):GetDataStore("MeltopiaCoins")
+-- Per player: { owned = { [id] = true }, killer = id } (the killer they play as).
+local Chars = game:GetService("DataStoreService"):GetDataStore("MeltopiaChars")
 
 -- ------------------------------------------------------------------------------------
 -- Looks: nrz (fetched live, so the killer always wears what nrz wears) and plain Melly.
@@ -15,6 +17,8 @@ local Coins = game:GetService("DataStoreService"):GetDataStore("MeltopiaCoins")
 
 local killerLook = SS.Looks.Killer
 local survivorLook = SS.Looks.Survivor
+local altLook = SS.Looks.Alt
+local shadowlessLook = SS.Looks.Shadowless
 
 local function dressRig(rig, look)
 	for _, key in { "HeadColor", "TorsoColor", "LeftArmColor", "RightArmColor", "LeftLegColor", "RightLegColor", "Face", "Accessories" } do
@@ -85,6 +89,9 @@ end
 
 local function setRole(player, role)
 	value(player, "StringValue", "Role", "lobby").Value = role
+	-- In the round you only get told where players near you are (StarterPlayer.PlayerSyncRange),
+	-- so a wallhack has nothing to show; the lobby, the caught and spectators see everyone.
+	player.SyncAll = role ~= "killer" and role ~= "survivor"
 end
 
 local function addCoins(player, amount)
@@ -110,16 +117,67 @@ local function lobbySpawn()
 	return spawn.Position + Vector3.new(math.cos(a) * 5, 3, math.sin(a) * 5)
 end
 
+-- Characters a player owns, and the ones they picked (shown to their app as values).
+local chars = {} -- player -> { owned = {}, killer = id, survivor = id }
+
+local function showChars(player)
+	local c = chars[player]
+	local owned = {}
+	for id in c.owned do
+		table.insert(owned, id)
+	end
+	table.sort(owned)
+	value(player, "StringValue", "Owned", "").Value = table.concat(owned, ",")
+	value(player, "StringValue", "KillerChar", "nrz").Value = c.killer
+	value(player, "StringValue", "SurvivorChar", "melly").Value = c.survivor
+end
+
+-- A character by id: its info and "killer" / "survivor", or nil.
+local function charInfo(id)
+	for _, kind in { "killers", "survivors" } do
+		for _, c in Shared.CHARACTERS[kind] do
+			if c.id == id then
+				return c, kind == "killers" and "killer" or "survivor"
+			end
+		end
+	end
+	return nil
+end
+
+local function owns(player, id)
+	local info = charInfo(id)
+	return info ~= nil and (info.price == 0 or (chars[player] and chars[player].owned[id] == true))
+end
+
 Players.PlayerAdded:Connect(function(player)
 	setRole(player, "lobby")
 	value(player, "NumberValue", "Coins", 0)
 	value(player, "NumberValue", "Kills", 0)
+	chars[player] = { owned = {}, killer = "nrz", survivor = "melly" }
+	showChars(player)
 	task.spawn(function()
 		local ok, saved = pcall(function()
 			return Coins:GetAsync("u" .. player.UserId)
 		end)
 		if ok and type(saved) == "number" then
 			player.Coins.Value = saved
+		end
+		local okC, c = pcall(function()
+			return Chars:GetAsync("u" .. player.UserId)
+		end)
+		if okC and type(c) == "table" and chars[player] then
+			for id, v in (type(c.owned) == "table" and c.owned or {}) do
+				if v == true then
+					chars[player].owned[id] = true
+				end
+			end
+			if type(c.killer) == "string" and owns(player, c.killer) then
+				chars[player].killer = c.killer
+			end
+			if type(c.survivor) == "string" and owns(player, c.survivor) then
+				chars[player].survivor = c.survivor
+			end
+			showChars(player)
 		end
 	end)
 	player.CharacterAdded:Connect(function()
@@ -128,13 +186,13 @@ Players.PlayerAdded:Connect(function(player)
 		if role == "killer" then
 			applyStats(player, Shared.KILLER_STATS)
 			if round and round.killer == player and not round.over then
-				if player.Character and not player.Character:FindFirstChild("Censor") then
+				if round.char.id == "nrz" and player.Character and not player.Character:FindFirstChild("Censor") then
 					SS.Censor:Clone().Parent = player.Character
 				end
 				player:Teleport(round.map.Spawns.Killer.Position + Vector3.new(0, 3, 0))
 			end
 		elseif role == "survivor" then
-			applyStats(player, Shared.SURVIVOR_STATS)
+			applyStats(player, Shared.survivorStats(chars[player] and chars[player].survivor))
 		else
 			-- Back in the lobby (after being caught, or between rounds): your own look.
 			player:ResetAppearance()
@@ -281,18 +339,74 @@ local function shuffle(t)
 	return t
 end
 
+-- ------------------------------------------------------------------------------------
+-- Map vote (in the lobby, before the round)
+-- ------------------------------------------------------------------------------------
+
+local votes = {} -- player -> map name
+
+local function countVotes()
+	local counts = {}
+	for p, name in votes do
+		if p.Parent then
+			counts[name] = (counts[name] or 0) + 1
+		end
+	end
+	for _, v in State.Votes:GetChildren() do
+		v.Value = counts[v.Name] or 0
+	end
+	return counts
+end
+
+Remotes.Vote.OnServerEvent:Connect(function(player, name)
+	if State.Phase.Value ~= "Lobby" or type(name) ~= "string" or not SS.Maps:FindFirstChild(name) then
+		return
+	end
+	votes[player] = votes[player] ~= name and name or nil -- pressing your map again takes the vote back
+	countVotes()
+end)
+
+-- The most voted map; a tie (or no votes) is settled by chance.
+local function votedMap()
+	local counts = countVotes()
+	local best, pool = 0, {}
+	for _, m in SS.Maps:GetChildren() do
+		local n = counts[m.Name] or 0
+		if n > best then
+			best, pool = n, { m }
+		elseif n == best then
+			table.insert(pool, m)
+		end
+	end
+	return pool[math.random(1, #pool)]
+end
+
 local function runRound(players)
-	local maps = SS.Maps:GetChildren()
-	local template = maps[math.random(1, #maps)]
-	local map = template:Clone()
+	local map = votedMap():Clone()
+	votes = {}
+	countVotes()
+
+	-- The night scales with the number of survivors (see Shared).
+	local survivorCount = #players - 1
+	local roundTime = Shared.roundTime(survivorCount)
+	local gens = shuffle(map.Generators:GetChildren())
+	local keep = math.min(Shared.genCount(survivorCount), #gens)
+	for i = #gens, keep + 1, -1 do
+		gens[i]:Destroy()
+		table.remove(gens, i)
+	end
+	local genBonus = Shared.genBonus(roundTime, #gens, survivorCount)
+	-- Into the world only now, so the generators left out never reach anyone.
 	map.Parent = workspace
 
 	local killer = pickKiller(players)
 	lastKiller = killer
-	round = { map = map, killer = killer, alive = {}, kills = 0, gens = {}, puzzles = {}, steps = {}, over = false,
-		cooldowns = { punch = 0, spike = 0 }, released = false, timeLeft = Shared.ROUND_TIME, hitAt = {} }
+	-- The killer plays as the character they picked (and own).
+	local char = Shared.killer(chars[killer] and owns(killer, chars[killer].killer) and chars[killer].killer or "nrz")
+	round = { map = map, killer = killer, char = char, alive = {}, kills = 0, gens = {}, puzzles = {}, steps = {}, over = false,
+		cooldowns = { punch = 0, spike = 0, fly = 0 }, released = false, timeLeft = roundTime, genBonus = genBonus, hitAt = {},
+		revealed = false, fly = nil, survivor = {}, turrets = {}, turretCool = {}, boost = {} }
 
-	local gens = map.Generators:GetChildren()
 	for _, gen in gens do
 		round.gens[gen] = 0
 		paintGen(gen, 0)
@@ -300,9 +414,10 @@ local function runRound(players)
 
 	State.Map.Value = map.Name
 	State.KillerId.Value = killer.UserId
+	State.KillerChar.Value = char.id
 	State.GensDone.Value = 0
 	State.GensTotal.Value = #gens
-	State.TimeLeft.Value = Shared.ROUND_TIME
+	State.TimeLeft.Value = roundTime
 	State.Release.Value = Shared.KILLER_DELAY
 	State.Phase.Value = "Round"
 
@@ -319,10 +434,15 @@ local function runRound(players)
 		p.Kills.Value = 0
 		if p == killer then
 			setRole(p, "killer")
-			p:ApplyAppearance(killerLook)
-			-- No face, just a black square that always looks at you.
-			if p.Character and not p.Character:FindFirstChild("Censor") then
-				SS.Censor:Clone().Parent = p.Character
+			if char.id == "shadowless" then
+				-- His own face: that grin is the point.
+				p:ApplyAppearance(shadowlessLook)
+			else
+				p:ApplyAppearance(killerLook)
+				-- No face, just a black square that always looks at you.
+				if p.Character and not p.Character:FindFirstChild("Censor") then
+					SS.Censor:Clone().Parent = p.Character
+				end
 			end
 			applyStats(p, Shared.KILLER_STATS)
 			local hum = humanoidOf(p)
@@ -334,8 +454,10 @@ local function runRound(players)
 			p:Teleport(map.Spawns.Killer.Position + Vector3.new(0, 3, 0))
 		else
 			setRole(p, "survivor")
-			p:ApplyAppearance(survivorLook)
-			applyStats(p, Shared.SURVIVOR_STATS)
+			local sid = chars[p] and owns(p, chars[p].survivor) and chars[p].survivor or "melly"
+			round.survivor[p] = sid
+			p:ApplyAppearance(sid == "alt" and altLook or survivorLook)
+			applyStats(p, Shared.survivorStats(sid))
 			local at = spawns[((i - 1) % #spawns) + 1]
 			p:Teleport(at + Vector3.new(math.random(-2, 2), 3, math.random(-2, 2)))
 		end
@@ -408,6 +530,9 @@ local function runRound(players)
 			end
 			applyStats(p, Shared.LOBBY_STATS)
 			local hum = humanoidOf(p)
+			if hum then
+				hum.Floating = false
+			end
 			if hum and hum.Health > 0 then
 				p:Teleport(lobbySpawn())
 			end
@@ -418,10 +543,14 @@ local function runRound(players)
 			s:Destroy()
 		end
 	end
+	for turret in round.turrets do
+		turret:Destroy()
+	end
 	map:Destroy()
 	round = nil
 	State.Map.Value = ""
 	State.KillerId.Value = 0
+	State.KillerChar.Value = ""
 	State.Phase.Value = "Lobby"
 end
 
@@ -470,6 +599,11 @@ task.spawn(function()
 end)
 
 Players.PlayerRemoving:Connect(function(player)
+	chars[player] = nil
+	if votes[player] then
+		votes[player] = nil
+		countVotes()
+	end
 	if round and round.alive[player] then
 		if player == round.killer then
 			endRound("survivors")
@@ -514,11 +648,11 @@ Remotes.GenSolve.OnServerEvent:Connect(function(player, gen)
 	local progress = round.gens[gen]
 	paintGen(gen, progress)
 	if progress >= Shared.GEN_STEPS then
-		round.timeLeft = math.max(1, round.timeLeft - Shared.GEN_BONUS)
+		round.timeLeft = math.max(1, round.timeLeft - round.genBonus)
 		State.TimeLeft.Value = round.timeLeft
 		State.GensDone.Value += 1
 		playAt(genBase(gen), "SfxGenDone", 1.2)
-		notifyAll("n_gen_done", Shared.GEN_BONUS)
+		notifyAll("n_gen_done", round.genBonus)
 	else
 		playAt(genBase(gen), "SfxTick", 0.8)
 	end
@@ -556,6 +690,14 @@ local function flatDir(v)
 	return d.Unit
 end
 
+-- Someone whose app went quiet is frozen where the server last heard of them: a hit
+-- on that spot isn't a hit on them (they'd come back from a lag spike already dead).
+local LAG_GRACE = 1.5
+
+local function hittable(p)
+	return p:GetNetworkIdle() < LAG_GRACE
+end
+
 local function hurt(victim, amount, sound)
 	local hum = humanoidOf(victim)
 	if not hum or hum.Health <= 0 then
@@ -565,6 +707,21 @@ local function hurt(victim, amount, sound)
 	hum:TakeDamage(amount)
 	playAt(rootOf(victim), sound, 1.3)
 	Remotes.Hit:FireClient(victim, amount)
+	-- A kick in the back: a moment of speed to get away.
+	if hum.Health > 0 and victim ~= round.killer then
+		local stats = Shared.survivorStats(round.survivor[victim])
+		local token = {}
+		round.boost[victim] = token
+		hum.WalkSpeed = stats.WalkSpeed * Shared.HIT_BOOST.speed
+		hum.SprintSpeed = stats.SprintSpeed * Shared.HIT_BOOST.speed
+		task.delay(Shared.HIT_BOOST.time, function()
+			if round and round.boost[victim] == token and hum.Parent then
+				round.boost[victim] = nil
+				hum.WalkSpeed = stats.WalkSpeed
+				hum.SprintSpeed = stats.SprintSpeed
+			end
+		end)
+	end
 end
 
 local function punch(killer, dir)
@@ -574,14 +731,14 @@ local function punch(killer, dir)
 	end
 	local best, bestD = nil, math.huge
 	for p in round.alive do
-		if p ~= killer then
+		if p ~= killer and hittable(p) then
 			local r = rootOf(p)
 			if r then
 				local to = r.Position - root.Position
 				local d = to.Magnitude
 				local flat = Vector3.new(to.X, 0, to.Z)
 				local facing = flat.Magnitude < 0.5 and 1 or flat.Unit:Dot(dir)
-				if d <= Shared.PUNCH.range and facing > 0.3 and math.abs(to.Y) < 5 and d < bestD then
+				if d <= Shared.PUNCH.range and facing > Shared.PUNCH.facing and math.abs(to.Y) < 4 and d < bestD then
 					best, bestD = p, d
 				end
 			end
@@ -589,6 +746,32 @@ local function punch(killer, dir)
 	end
 	if best then
 		hurt(best, Shared.PUNCH.damage, "SfxPunch")
+		return
+	end
+	-- Nobody in reach: a turret in front of the killer takes the hit.
+	for turret in round.turrets do
+		local base = turret:FindFirstChild("Head")
+		if base then
+			local to = base.Position - root.Position
+			local flat = Vector3.new(to.X, 0, to.Z)
+			if flat.Magnitude <= Shared.PUNCH.range + 1 and (flat.Magnitude < 0.5 or flat.Unit:Dot(dir) > Shared.PUNCH.facing) then
+				round.turrets[turret] -= 1
+				playAt(base, "SfxPunch", 1.2)
+				if round.turrets[turret] <= 0 then
+					round.turrets[turret] = nil
+					turret:Destroy()
+					notifyAll("n_turret_broken")
+				else
+					base.Color = Color3.fromHex("#ffcf5a")
+					task.delay(0.25, function()
+						if base.Parent then
+							base.Color = Color3.fromHex("#6bffa8")
+						end
+					end)
+				end
+				return
+			end
+		end
 	end
 end
 
@@ -639,7 +822,7 @@ local function throwSpike(killer, aim)
 		local to = from + dir * step
 		-- Anyone along this stretch?
 		for p in round.alive do
-			if p ~= killer then
+			if p ~= killer and hittable(p) then
 				local r = rootOf(p)
 				if r then
 					local c = r.Position + Vector3.new(0, 1.6, 0)
@@ -683,8 +866,269 @@ Remotes.Action.OnServerEvent:Connect(function(player, move, aim)
 	if move == "punch" and now >= round.cooldowns.punch then
 		round.cooldowns.punch = now + Shared.PUNCH.cooldown - 0.1
 		punch(player, dir)
-	elseif move == "spike" and now >= round.cooldowns.spike then
+	elseif move == "spike" and round.char.id == "nrz" and now >= round.cooldowns.spike then
 		round.cooldowns.spike = now + Shared.SPIKE.cooldown - 0.2
 		throwSpike(player, aim)
 	end
+end)
+
+-- Once a round, in the last seconds: the killer sees where every survivor is.
+Remotes.Reveal.OnServerEvent:Connect(function(player)
+	if not round or round.over or player ~= round.killer or not round.released or round.revealed then
+		return
+	end
+	if round.timeLeft > Shared.REVEAL.at then
+		return
+	end
+	round.revealed = true
+	local list = {}
+	for p in round.alive do
+		if p ~= player and p.Parent then
+			table.insert(list, p)
+		end
+	end
+	-- The markers need to know where everyone is: the killer is told, for as long as they last.
+	player.SyncAll = true
+	task.delay(Shared.REVEAL.duration, function()
+		if player.Parent and roleOf(player) == "killer" then
+			player.SyncAll = false
+		end
+	end)
+	Remotes.Reveal:FireClient(player, list, Shared.REVEAL.duration)
+	for _, p in list do
+		Remotes.Notify:FireClient(p, "n_revealed")
+	end
+end)
+
+-- ------------------------------------------------------------------------------------
+-- Characters: buy with coins, pick your killer
+-- ------------------------------------------------------------------------------------
+
+local shopBusy = {}
+
+local function saveChars(player)
+	local c = chars[player]
+	if not c then
+		return
+	end
+	pcall(function()
+		Chars:SetAsync("u" .. player.UserId, { owned = c.owned, killer = c.killer, survivor = c.survivor })
+	end)
+end
+
+Remotes.Shop.OnServerEvent:Connect(function(player, action, id)
+	local c = chars[player]
+	local info, kind = nil, nil
+	if type(id) == "string" then
+		info, kind = charInfo(id)
+	end
+	if not c or not info or shopBusy[player] then
+		return
+	end
+	if action == "buy" and info.price > 0 and not c.owned[id] then
+		shopBusy[player] = true
+		-- Take the coins first; if that went below zero, it wasn't affordable: give them back.
+		local ok, left = pcall(function()
+			return Coins:IncrementAsync("u" .. player.UserId, -info.price)
+		end)
+		if ok and type(left) == "number" and left >= 0 then
+			c.owned[id] = true
+			c[kind] = id
+			player.Coins.Value = left
+			saveChars(player)
+			showChars(player)
+			Remotes.Notify:FireClient(player, "n_bought", info.name)
+		else
+			if ok and type(left) == "number" then
+				pcall(function()
+					player.Coins.Value = Coins:IncrementAsync("u" .. player.UserId, info.price)
+				end)
+			end
+			Remotes.Notify:FireClient(player, "n_no_coins", info.price)
+		end
+		shopBusy[player] = nil
+	elseif action == "equip" and owns(player, id) then
+		c[kind] = id
+		saveChars(player)
+		showChars(player)
+	end
+end)
+
+-- ------------------------------------------------------------------------------------
+-- shadowless: up, hang there, then swoop to where you click
+-- ------------------------------------------------------------------------------------
+
+local function land(player)
+	if not round or not round.fly then
+		return
+	end
+	round.fly = nil
+	round.cooldowns.fly = time() + Shared.FLY.cooldown
+	local hum = humanoidOf(player)
+	if hum then
+		hum.Floating = false
+	end
+end
+
+Remotes.Fly.OnServerEvent:Connect(function(player, step, target)
+	if not round or round.over or player ~= round.killer or not round.released or round.char.id ~= "shadowless" then
+		return
+	end
+	local root, hum = rootOf(player), humanoidOf(player)
+	if not root or not hum then
+		return
+	end
+	local now = time()
+	if step == "up" and not round.fly and now >= round.cooldowns.fly then
+		local token = {}
+		round.fly = { phase = "up", at = now, token = token }
+		hum.Floating = true
+		player:Glide(root.Position + Vector3.new(0, Shared.FLY.rise, 0), Shared.FLY.riseTime)
+		-- Nowhere picked in time: drop down.
+		task.delay(Shared.FLY.riseTime + Shared.FLY.hoverMax, function()
+			if round and round.fly and round.fly.token == token and round.fly.phase == "up" then
+				land(player)
+			end
+		end)
+	elseif step == "to" and round.fly and round.fly.phase == "up" and now - round.fly.at >= 0.4 and typeof(target) == "Vector3" then
+		local from = root.Position
+		local flat = Vector3.new(target.X - from.X, 0, target.Z - from.Z)
+		if flat.Magnitude > Shared.FLY.range then
+			flat = flat.Unit * Shared.FLY.range
+		end
+		local to = Vector3.new(from.X + flat.X, math.clamp(target.Y, from.Y - 60, from.Y + 4) + 2.5, from.Z + flat.Z)
+		local t = math.clamp((to - from).Magnitude / Shared.FLY.speed, 0.35, 2.5)
+		round.fly.phase = "going"
+		local token = round.fly.token
+		player:Glide(to, t)
+		task.delay(t + 0.1, function()
+			if round and round.fly and round.fly.token == token then
+				land(player)
+			end
+		end)
+	end
+end)
+
+-- ------------------------------------------------------------------------------------
+-- Alt's turret: put down where he stands, heals survivors around it for a while
+-- ------------------------------------------------------------------------------------
+
+local function turretPart(parent, name, size, pos, color, material, extra)
+	local part = Instance.new("Part")
+	part.Name = name
+	part.Size = size
+	part.Position = pos
+	part.Color = Color3.fromHex(color)
+	part.Material = material
+	part.Anchored = true
+	for k, v in extra or {} do
+		part[k] = v
+	end
+	part.Parent = parent
+	return part
+end
+
+Remotes.Turret.OnServerEvent:Connect(function(player)
+	if not round or round.over or not round.alive[player] or player == round.killer or round.survivor[player] ~= "alt" then
+		return
+	end
+	local now = time()
+	-- Half a second of slack: the app counts the cooldown from its own press, a ping earlier.
+	if now < (round.turretCool[player] or 0) - 0.5 then
+		Remotes.Turret:FireClient(player, round.turretCool[player] - now)
+		return
+	end
+	local root = rootOf(player)
+	if not root then
+		Remotes.Turret:FireClient(player, 0)
+		return
+	end
+	-- On the ground under Alt.
+	local params = RaycastParams.new()
+	params.FilterDescendantsInstances = { player.Character }
+	params.FilterType = "Exclude"
+	params.RespectCanCollide = true
+	local hit = workspace:Raycast(root.Position, Vector3.new(0, -12, 0), params)
+	if not hit then
+		Remotes.Turret:FireClient(player, 0)
+		return
+	end
+	round.turretCool[player] = now + Shared.TURRET.cooldown
+	-- The app's cooldown follows the server's answer, not its own guess.
+	Remotes.Turret:FireClient(player, Shared.TURRET.cooldown)
+	local at = hit.Position
+	local model = Instance.new("Model")
+	model.Name = "Turret"
+	turretPart(model, "Base", Vector3.new(1.8, 0.4, 1.8), at + Vector3.new(0, 0.2, 0), "#2c3a4a", "Metal")
+	turretPart(model, "Post", Vector3.new(0.5, 2.2, 0.5), at + Vector3.new(0, 1.5, 0), "#3a4a5c", "Metal")
+	local head = turretPart(model, "Head", Vector3.new(1.2, 0.9, 1.2), at + Vector3.new(0, 3, 0), "#6bffa8", "Neon")
+	local light = Instance.new("PointLight")
+	light.Color = Color3.fromHex("#6bffa8")
+	light.Brightness = 2
+	light.Range = Shared.TURRET.radius + 2
+	light.Parent = head
+	turretPart(model, "Area", Vector3.new(Shared.TURRET.radius * 2, 0.06, Shared.TURRET.radius * 2), at + Vector3.new(0, 0.04, 0), "#6bffa8", "Neon",
+		{ Shape = "Cylinder", CanCollide = false, CanTouch = false, Transparency = 0.8, CastShadow = false })
+	model.Parent = workspace
+	round.turrets[model] = Shared.TURRET.hits
+	notifyAll("n_turret", player.DisplayName)
+	local myRound = round
+	task.spawn(function()
+		local left = Shared.TURRET.life
+		while left > 0 and myRound == round and not round.over and round.turrets[model] do
+			task.wait(1)
+			left -= 1
+			for p in round.alive do
+				local r, hum = rootOf(p), humanoidOf(p)
+				if p ~= round.killer and r and hum and hum.Health > 0 and (r.Position - head.Position).Magnitude <= Shared.TURRET.radius + 1.5 then
+					hum.Health = math.min(hum.MaxHealth, hum.Health + Shared.TURRET.heal)
+				end
+			end
+		end
+		if myRound.turrets then
+			myRound.turrets[model] = nil
+		end
+		if model.Parent then
+			model:Destroy()
+		end
+	end)
+end)
+
+-- ------------------------------------------------------------------------------------
+-- Chase music: how close the danger is, worked out here (apps don't know where the
+-- others really are) and sent to each player when it changes
+-- ------------------------------------------------------------------------------------
+
+local sentDanger = {}
+task.spawn(function()
+	while true do
+		task.wait(0.25)
+		for _, p in Players:GetPlayers() do
+			local d = 0
+			local myRoot = rootOf(p)
+			if round and not round.over and round.alive[p] and myRoot and round.killer then
+				local best = math.huge
+				for other in round.alive do
+					-- Survivors fear the killer; the killer hunts the nearest survivor.
+					local counts = (p ~= round.killer and other == round.killer) or (p == round.killer and other ~= p)
+					local r = counts and rootOf(other)
+					if r then
+						best = math.min(best, (r.Position - myRoot.Position).Magnitude)
+					end
+				end
+				if best < math.huge then
+					d = math.clamp((Shared.DANGER.far - best) / (Shared.DANGER.far - Shared.DANGER.near), 0, 1)
+				end
+			end
+			d = math.floor(d * 10 + 0.5) / 10
+			if sentDanger[p] ~= d then
+				sentDanger[p] = d
+				Remotes.Danger:FireClient(p, d)
+			end
+		end
+	end
+end)
+
+Players.PlayerRemoving:Connect(function(p)
+	sentDanger[p] = nil
 end)

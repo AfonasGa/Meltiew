@@ -118,7 +118,7 @@ export function startServer({ port = PORT, host = HOST, dbFile = DB_FILE, render
       socket.destroy();
       return;
     }
-    const auth = api.userForToken(url.searchParams.get('token') || '');
+    const auth = api.ipBanned(clientIp(req)) ? null : api.userForToken(url.searchParams.get('token') || '');
     if (!auth) {
       socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
       socket.destroy();

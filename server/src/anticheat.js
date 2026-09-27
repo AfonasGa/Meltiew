@@ -14,9 +14,15 @@ const SLACK_RISE = 3;
 const TELEPORT_SLACK = 12; // a single jump this far beyond the limit is a teleport
 const DECAY_MS = 4000; // one violation point fades every this many ms
 export const KICK_POINTS = 14;
-const POINTS = { speed: 1, rise: 2, ceiling: 3, teleport: 3 };
+const POINTS = { speed: 1, rise: 2, ceiling: 3, teleport: 3, fly: 2 };
+// In the air (Studio places, which tell us what's under each player): lag and the
+// footing check (4 times a second) get this much slack; the app never falls faster.
+const AIR_SLACK_MS = 600;
+const MAX_FALL = 50;
 const EXPECT_MS = 4000; // how long a server teleport waits for the client to arrive
 const EXPECT_RADIUS = 14; // "arrived": this close to where the server put them
+const GLIDE_RADIUS = 6; // a Glide: this close to the straight line counts as on the way
+const GLIDE_SLACK_MS = 1500; // and this long after it should have arrived
 
 export class MoveGuard {
   constructor(pos, now = Date.now()) {
@@ -30,6 +36,7 @@ export class MoveGuard {
   /** A legit jump in position (spawn, respawn, server teleport): start over from here. */
   reset(pos, now = Date.now()) {
     this.correcting = null;
+    this.air = null;
     this.arriving = null;
     this.good = pos.slice();
     this.samples = [{ t: now, p: pos.slice() }];
@@ -46,6 +53,15 @@ export class MoveGuard {
   }
 
 
+  /**
+   * The place flies the player from `from` to `to` in `ms` (Player:Glide): anything
+   * along that line goes through until a moment after they should have arrived.
+   */
+  glideTo(from, to, ms, now = Date.now()) {
+    this.gliding = { from: from.slice(), to: to.slice(), until: now + ms + GLIDE_SLACK_MS };
+    this.graceUntil = now + 1500;
+  }
+
   /** Lets the next update land anywhere near `pos` (a respawn the client does itself). */
   expect(pos, radius, now = Date.now()) {
     this.pending = { p: pos.slice(), r: radius, until: now + 8000 };
@@ -57,6 +73,13 @@ export class MoveGuard {
    */
   check(pos, limits, now = Date.now()) {
     this._decay(now);
+    if (this.gliding) {
+      if (now > this.gliding.until) this.gliding = null;
+      else if (distToSegment(pos, this.gliding.from, this.gliding.to) <= GLIDE_RADIUS) {
+        this.reset(pos, now);
+        return null;
+      }
+    }
     if (this.arriving) {
       if (dist3(pos, this.arriving.p) <= EXPECT_RADIUS) {
         this.arriving = null;
@@ -110,7 +133,44 @@ export class MoveGuard {
       const climb = (limits.rise || 0) * Math.max((now - (low?.t ?? now)) / 1000, 0);
       if (low && pos[1] - low.p[1] > maxRise * 1.2 + SLACK_RISE + climb) return this._violate('rise', now, low.p);
     }
+    const air = this._air(pos, limits, now, inGrace);
+    if (air) return air;
     return this._accept(pos, now);
+  }
+
+  /**
+   * Nothing solid underfoot (the place's own geometry, checked on the server): you're
+   * jumping or falling. A jump rises only at its start; after the top you fall, faster
+   * and faster. Rising again in mid-air (jumping off nothing) or hanging there is flying.
+   * Humanoid.Floating, Glide, Climbable parts and seats (solid parts) are fine.
+   */
+  _air(pos, limits, now, inGrace) {
+    if (limits.grounded === undefined) return null; // the playground: no footing info
+    if (limits.grounded || limits.floating || limits.climb || inGrace) {
+      this.air = null;
+      return null;
+    }
+    if (!this.air) {
+      this.air = { since: now, top: pos[1], topAt: now };
+      return null;
+    }
+    const g = Math.max(limits.gravity, 1);
+    if (pos[1] > this.air.top + 0.5) {
+      // Still going up: fine while the jump lasts, a second jump in the air isn't.
+      if (now - this.air.since > (limits.jump / g) * 1000 + AIR_SLACK_MS) {
+        this.air = null;
+        return this._violate('fly', now);
+      }
+      this.air.top = pos[1];
+      this.air.topAt = now;
+      return null;
+    }
+    const t = (now - this.air.topAt - AIR_SLACK_MS) / 1000;
+    if (t > 0.4 && this.air.top - pos[1] < Math.min(0.5 * g * t * t, MAX_FALL * t) * 0.3) {
+      this.air = null;
+      return this._violate('fly', now);
+    }
+    return null;
   }
 
   _accept(pos, now) {
@@ -156,6 +216,13 @@ export class MoveGuard {
 
 function distH(a, b) {
   return Math.hypot(a[0] - b[0], a[2] - b[2]);
+}
+
+function distToSegment(p, a, b) {
+  const ab = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+  const len2 = ab[0] * ab[0] + ab[1] * ab[1] + ab[2] * ab[2];
+  const t = len2 > 0 ? Math.max(0, Math.min(1, ((p[0] - a[0]) * ab[0] + (p[1] - a[1]) * ab[1] + (p[2] - a[2]) * ab[2]) / len2)) : 0;
+  return dist3(p, [a[0] + ab[0] * t, a[1] + ab[1] * t, a[2] + ab[2] * t]);
 }
 
 function dist3(a, b) {

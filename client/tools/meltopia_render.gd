@@ -1,17 +1,21 @@
 extends Node
 ## Meltopia's pictures, rendered with the game's own Melly avatar:
 ##   killer / survivor   4:3 inventory pictures (nrz with the censor square, Melly running)
+##   shadowless          4:3 picture of the second killer: an angry Melly in red, floating
+##   alt                 4:3 picture of the second survivor, Alt, by his healing turret
 ##   cover_wide          16:9 place cover (both of them under the red moon, with the title)
 ##   cover_square        1:1 place icon (the censor square on the moon)
 ##
-## Run from the client folder (the window size is the picture size):
-##   godot --path . res://tools/meltopia_render.tscn --resolution 1200x900 -- --what=killer --out=/tmp/killer.png
-##   godot --path . res://tools/meltopia_render.tscn --resolution 1920x1080 -- --what=cover_wide --out=/tmp/cover.png
+## Run from the client folder (--size is the picture size; the window doesn't matter,
+## so tiling window managers can resize it all they like):
+##   godot --path . res://tools/meltopia_render.tscn -- --what=killer --size=1024x768 --out=/tmp/killer.png
+##   godot --path . res://tools/meltopia_render.tscn -- --what=cover_wide --size=1920x1080 --out=/tmp/cover.png
 ## --look=<file> takes nrz's look (JSON from https://meltiew.narez.xyz/api/users/nrz/look);
 ## by default it's examples/meltopia/nrz_look.json. --pose=<seconds> picks the animation frame.
 
 var _look_path := "res://../examples/meltopia/nrz_look.json"
 var _out := ""
+var _vp: SubViewport
 
 
 func _ready() -> void:
@@ -21,7 +25,11 @@ func _ready() -> void:
 func _run() -> void:
 	var what := "killer"
 	var pose := 0.5
+	var size := Vector2i(1024, 768)
 	for a in OS.get_cmdline_user_args():
+		if a.begins_with("--size="):
+			var wh := a.trim_prefix("--size=").split("x")
+			size = Vector2i(int(wh[0]), int(wh[1]))
 		if a.begins_with("--what="):
 			what = a.trim_prefix("--what=")
 		elif a.begins_with("--out="):
@@ -32,6 +40,11 @@ func _run() -> void:
 			pose = float(a.trim_prefix("--pose="))
 	if _out == "":
 		_out = OS.get_executable_path().get_base_dir().path_join(what + ".png")
+	_vp = SubViewport.new()
+	_vp.size = size
+	_vp.msaa_3d = Viewport.MSAA_4X
+	_vp.render_target_update_mode = SubViewport.UPDATE_ALWAYS
+	add_child(_vp)
 	if what.begins_with("cover_"):
 		await _place_cover(what.trim_prefix("cover_"))
 	else:
@@ -45,7 +58,7 @@ func wait(t: float) -> void:
 
 func _save(_name: String) -> void:
 	await RenderingServer.frame_post_draw
-	get_viewport().get_texture().get_image().save_png(_out)
+	_vp.get_texture().get_image().save_png(_out)
 	print("saved ", _out)
 
 
@@ -84,11 +97,10 @@ func _light(root: Node3D, pos: Vector3, c: Color, energy: float, rng: float) -> 
 
 ## 4:3 inventory pictures of the Meltopia characters: nrz (the killer) and Melly.
 func _char_render(which: String, pose: float) -> void:
-	var killer := which == "killer"
+	var shadowless := which == "shadowless"
+	var killer := which == "killer" or shadowless
 	var root := Node3D.new()
-	get_tree().root.add_child(root)
-	if get_tree().current_scene and get_tree().current_scene != self:
-		get_tree().current_scene.queue_free()
+	_vp.add_child(root)
 	var env := Environment.new()
 	env.background_mode = Environment.BG_COLOR
 	env.background_color = Color("#0b0610") if killer else Color("#070d1c")
@@ -146,7 +158,26 @@ func _char_render(which: String, pose: float) -> void:
 	root.add_child(av)
 	await get_tree().process_frame
 	await get_tree().process_frame
-	if killer:
+	if shadowless:
+		# Melly gone bad: red shirt, evil grin, hanging in the air (the flight ability).
+		av.apply_user({"colors": {"head": "#f5f1ec", "torso": "#d8283f", "arm_l": "#f5f1ec", "arm_r": "#f5f1ec", "leg_l": "#302d38", "leg_r": "#302d38"}, "face": ">:)", "accessories": []})
+		av.rotation_degrees.y = 180 - 20
+		av.position.y = 0.85
+		av.restart("fall")
+		_light(root, Vector3(0, 0.25, 0.4), Color("#ff2a48"), 5.0, 4.0)
+		_light(root, Vector3(-2.0, 2.8, -1.8), Color("#ff5a3d"), 3.0, 6.0)
+		_light(root, Vector3(1.6, 2.6, 3.6), Color("#e8ecff"), 1.6, 10.0)
+		# A red haze on the ground under the floating feet.
+		var ring := MeshInstance3D.new()
+		var rm := CylinderMesh.new()
+		rm.top_radius = 0.7
+		rm.bottom_radius = 0.7
+		rm.height = 0.02
+		ring.mesh = rm
+		ring.material_override = _mat(Color("#ff2a48"), 1.0, 1.2)
+		ring.position = Vector3(0, 0.02, 0)
+		root.add_child(ring)
+	elif killer:
 		var look: Dictionary = JSON.parse_string(FileAccess.get_file_as_string(_look_path))
 		av.apply_user(look)
 		av.rotation_degrees.y = 180 - 24
@@ -159,6 +190,33 @@ func _char_render(which: String, pose: float) -> void:
 		_light(root, Vector3(-1.8, 2.8, -1.8), Color("#ff2a48"), 6.0, 6.0)
 		_light(root, Vector3(2.2, 2.2, -1.6), Color("#ff5a3d"), 2.5, 5.0)
 		_light(root, Vector3(1.6, 2.4, 3.6), Color("#e8ecff"), 1.8, 10.0)
+	elif which == "alt":
+		var look: Dictionary = JSON.parse_string(FileAccess.get_file_as_string("res://../examples/meltopia/alt_look.json"))
+		av.apply_user(look)
+		av.rotation_degrees.y = 180 + 22
+		av.restart("idle")
+		# His turret: a squat post with a glowing head, healing the air around it.
+		var tur := Node3D.new()
+		tur.position = Vector3(1.5, 0, -0.8)
+		root.add_child(tur)
+		_box(tur, Vector3(0.9, 0.2, 0.9), Vector3(0, 0.1, 0), _mat(Color("#2c3a4a"), 0.5))
+		_box(tur, Vector3(0.28, 1.1, 0.28), Vector3(0, 0.75, 0), _mat(Color("#3a4a5c"), 0.5))
+		_box(tur, Vector3(0.6, 0.45, 0.6), Vector3(0, 1.45, 0), _mat(Color("#6bffa8"), 0.3, 4.0))
+		var ring := MeshInstance3D.new()
+		var rm := CylinderMesh.new()
+		rm.top_radius = 2.2
+		rm.bottom_radius = 2.2
+		rm.height = 0.02
+		ring.mesh = rm
+		var rmat := _mat(Color("#6bffa8"), 1.0, 1.5)
+		rmat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		rmat.albedo_color.a = 0.35
+		ring.material_override = rmat
+		ring.position = Vector3(1.5, 0.02, -0.8)
+		root.add_child(ring)
+		_light(root, Vector3(1.5, 1.8, -0.6), Color("#6bffa8"), 4.0, 6.0)
+		_light(root, Vector3(-2.2, 2.4, -1.8), Color("#4cc9f0"), 3.0, 6.0)
+		_light(root, Vector3(0.6, 2.4, 3.4), Color("#9fb4ff"), 0.9, 10.0)
 	else:
 		av.apply_user({"colors": {"head": "#f5f1ec", "torso": "#baa4e2", "arm_l": "#f5f1ec", "arm_r": "#f5f1ec", "leg_l": "#302d38", "leg_r": "#302d38"}, "face": ":O", "accessories": []})
 		av.rotation_degrees.y = 180 + 28
@@ -190,15 +248,18 @@ func _char_render(which: String, pose: float) -> void:
 	root.add_child(cam)
 	cam.position = Vector3(1.1, 0.45, 4.6) if killer else Vector3(-0.8, 1.1, 4.4)
 	cam.look_at(Vector3(0.1, 1.2, 0) if killer else Vector3(-0.35, 1.0, 0))
+	if shadowless:
+		cam.position = Vector3(0.8, 0.9, 3.7)
+		cam.look_at(Vector3(0.0, 1.6, 0))
 	cam.current = true
 	await wait(pose)
 	if av.anim_player:
 		av.anim_player.pause()
-	if killer:
+	if killer and not shadowless:
 		# A spike in his hand, pointing down and out.
 		var hp: Vector3 = av.hand_r().global_position
 		_box(root, Vector3(0.08, 1.25, 0.08), hp + Vector3(-0.12, -0.38, 0.12), _mat(Color("#ff3b4f"), 0.4, 6.0), Vector3(20, 0, -24))
-	if killer and not OS.get_cmdline_user_args().has("--nocensor"):
+	if killer and not shadowless and not OS.get_cmdline_user_args().has("--nocensor"):
 		var l := Label3D.new()
 		l.text = "\u25a0"
 		l.font = UI.font_black
@@ -256,9 +317,7 @@ func _censor(root: Node3D, av: MellyAvatar, cam: Camera3D) -> void:
 func _place_cover(kind: String) -> void:
 	var wide := kind == "wide"
 	var root := Node3D.new()
-	get_tree().root.add_child(root)
-	if get_tree().current_scene and get_tree().current_scene != self:
-		get_tree().current_scene.queue_free()
+	_vp.add_child(root)
 	var env := Environment.new()
 	env.background_mode = Environment.BG_COLOR
 	env.background_color = Color("#0a0612")
@@ -344,7 +403,7 @@ func _place_cover(kind: String) -> void:
 	# The title.
 	var layer := CanvasLayer.new()
 	root.add_child(layer)
-	var vp := get_viewport().get_visible_rect().size
+	var vp := Vector2(_vp.size)
 	var title := Label.new()
 	title.text = "MELTOPIA"
 	title.add_theme_font_override("font", UI.font_black)

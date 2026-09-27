@@ -9,7 +9,7 @@ const TORSO_REST := Vector3(0, 2, 0)
 
 static func install(ap: AnimationPlayer) -> void:
 	var lib: AnimationLibrary = ap.get_animation_library(&"")
-	for spec in [_dance(), _cheer(), _sit(), _clap(), _laugh(), _punch(), _throw()]:
+	for spec in [_dance(), _cheer(), _sit(), _clap(), _laugh(), _punch(), _throw(), _hug_wait(), _hug()]:
 		if not lib.has_animation(spec.name):
 			lib.add_animation(spec.name, _build(spec))
 	# The imported clips never key the torso position (and some skip bones), so after
@@ -249,5 +249,37 @@ static func _throw() -> Dictionary:
 			"Torso": [[0.0, q(0, 0, 0)], [L * 0.35, q(-0.18, 0.3, 0)], [L * 0.6, q(0.22, -0.25, 0)], [L, q(0, 0, 0)]],
 			"LegL": [[0.0, q(0, 0, 0)], [L * 0.6, q(-0.5, 0, 0)], [L, q(0, 0, 0)]],
 			"LegR": [[0.0, q(0, 0, 0)], [L * 0.6, q(0.3, 0, 0)], [L, q(0, 0, 0)]],
+		},
+	}
+
+
+## Waiting for a hug: arms open wide in front, looking left and right for someone.
+static func _hug_wait() -> Dictionary:
+	var L := 2.4
+	var open_l := q(-1.15, 0, 0.75)
+	var open_r := q(-1.15, 0, -0.75)
+	return {
+		"name": "HugWait", "length": L,
+		"rot": {
+			"ArmL": [[0.0, open_l], [L * 0.5, q(-1.25, 0, 0.7)], [L, open_l]],
+			"ArmR": [[0.0, open_r], [L * 0.5, q(-1.25, 0, -0.7)], [L, open_r]],
+			"Head": [[0.0, q(0, 0.55, 0)], [L * 0.25, q(0.05, 0, 0)], [L * 0.5, q(0, -0.55, 0)], [L * 0.75, q(0.05, 0, 0)], [L, q(0, 0.55, 0)]],
+			"Torso": [[0.0, q(0, 0.12, 0)], [L * 0.5, q(0, -0.12, 0)], [L, q(0, 0.12, 0)]],
+		},
+	}
+
+
+## The hug itself (one shot): arms close around the other one, a squeeze, and let go.
+static func _hug() -> Dictionary:
+	var L := 2.2
+	var wrap_l := q(-1.35, 0, -0.3)
+	var wrap_r := q(-1.35, 0, 0.3)
+	return {
+		"name": "Hug", "length": L, "loop": false,
+		"rot": {
+			"ArmL": [[0.0, q(-1.15, 0, 0.75)], [L * 0.2, wrap_l], [L * 0.8, wrap_l], [L, q(0, 0, 0)]],
+			"ArmR": [[0.0, q(-1.15, 0, -0.75)], [L * 0.2, wrap_r], [L * 0.8, wrap_r], [L, q(0, 0, 0)]],
+			"Torso": [[0.0, q(0, 0, 0)], [L * 0.2, q(0.12, 0, 0)], [L * 0.5, q(0.14, 0, 0.06)], [L * 0.8, q(0.12, 0, -0.04)], [L, q(0, 0, 0)]],
+			"Head": [[0.0, q(0, 0, 0)], [L * 0.2, q(0.1, 0, 0.25)], [L * 0.8, q(0.1, 0, 0.25)], [L, q(0, 0, 0)]],
 		},
 	}

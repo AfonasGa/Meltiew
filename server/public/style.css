@@ -36,7 +36,8 @@ img { display: block; }
 .nav {
   position: sticky; top: 0; z-index: 20;
   display: flex; align-items: center; gap: 18px;
-  padding: 14px max(20px, calc((100vw - 1120px) / 2));
+  /* Its own width, wider than the page (it holds a lot) but centered: the same margin on both sides. */
+  padding: 14px max(20px, calc((100vw - 1500px) / 2));
   background: #16141dd9; backdrop-filter: blur(14px);
   border-bottom: 1px solid #ffffff0d;
 }
@@ -481,3 +482,4 @@ button.pill.on { background: var(--accent); color: #1d1a26; }
 .cm-chip { display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px 6px 6px; border-radius: 999px; background: var(--card); color: var(--text); text-decoration: none; margin: 0 8px 8px 0; }
 .accent { color: var(--accent); }
 b.danger { color: var(--danger); }
+b.mint { color: var(--mint); }
