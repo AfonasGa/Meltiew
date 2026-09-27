@@ -20,6 +20,10 @@ boot_splash/show_image=false
 config/icon="res://assets/icon.png"
 config/windows_native_icon="res://assets/icon.ico"
 
+[audio]
+
+driver/enable_input=true
+
 [autoload]
 
 Session="*res://scripts/autoload/session.gd"

@@ -29,6 +29,9 @@ var settings := {
 	"ui_scale": 0.0,
 	# Bumped when the graphics presets change, to re-pick the default.
 	"gfx_v": 2,
+	# Voice chat: hear other players, and which microphone to use ("Default" = the system's).
+	"voice_hear": true,
+	"mic_device": "Default",
 }
 ## Where the game scene should go when it opens: "auto", "new" or a server id.
 var pending_server := "auto"

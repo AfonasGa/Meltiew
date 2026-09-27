@@ -19,6 +19,7 @@ var menu: GameMenu
 ## ProximityPrompts and "Hug" by players waiting for one (see PlacePrompts).
 var prompts: PlacePrompts
 var remotes := {}  # user id -> RemotePlayer
+var voice: Voice
 var users := {}  # user id -> public user dict (everyone incl. me)
 var my_id := -1
 var admin: AdminPanel
@@ -102,6 +103,12 @@ func _ready() -> void:
 	hud.admin_requested.connect(_toggle_admin)
 	hud.emote_picked.connect(_emote)
 	hud.tool_picked.connect(_pick_tool)
+	voice = Voice.new()
+	voice.net = net
+	voice.remotes = remotes
+	add_child(voice)
+	hud.mic_toggled.connect(voice.set_mic)
+	voice.speaking_changed.connect(hud.set_speaking)
 
 	menu = GameMenu.new()
 	menu.game = self
@@ -283,6 +290,8 @@ func _on_message(m: Dictionary) -> void:
 				"admin":
 					hud.add_chat("Meltiew", str(m.get("m", "")), Color("#ffd166"))
 					hud.big_message(str(m.get("m", "")), 3.5)
+		"voice":
+			voice.heard(int(m.get("id", 0)), str(m.get("d", "")))
 		"hug":
 			# Someone took our open arms, or we took theirs: face to face, one hug.
 			if m.has("pos"):

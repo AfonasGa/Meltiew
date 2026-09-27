@@ -73,5 +73,24 @@ static func game_block(parent: Control) -> void:
 	slider(parent, L.t("volume"), "volume", 0.0, 1.0, 0.05, true)
 	chips(parent, L.t("graphics"), "quality", [["low", L.t("quality_low")], ["medium", L.t("quality_medium")], ["high", L.t("quality_high")]])
 	toggle(parent, L.t("show_fps"), "show_fps")
+	toggle(parent, L.t("voice_hear"), "voice_hear")
+	# Which microphone voice chat listens to.
+	var mic_row := UI.hbox(8)
+	mic_row.add_child(UI.label(L.t("mic_device"), 19, UI.TEXT))
+	mic_row.add_child(UI.spacer())
+	var pick := OptionButton.new()
+	pick.custom_minimum_size.x = 240
+	pick.clip_text = true
+	var devices := AudioServer.get_input_device_list()
+	for i in devices.size():
+		pick.add_item(L.t("mic_default") if devices[i] == "Default" else devices[i], i)
+		if devices[i] == str(Session.settings.get("mic_device", "Default")):
+			pick.select(i)
+	pick.item_selected.connect(func(i: int):
+		Session.settings["mic_device"] = devices[i]
+		AudioServer.input_device = devices[i]
+		Session.save_settings())
+	mic_row.add_child(pick)
+	parent.add_child(mic_row)
 	if not DisplayServer.is_touchscreen_available():
 		toggle(parent, L.t("shift_lock"), "shift_lock")

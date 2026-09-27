@@ -177,6 +177,13 @@ func _draw() -> void:
 			_line([Vector2(4, 5), Vector2(6, 7)])
 			_line([Vector2(20, 5), Vector2(18, 7)])
 			_line([Vector2(12, 1.5), Vector2(12, 3)])
+		"mic", "mic_off":
+			_line([Vector2(9.5, 5), Vector2(9.5, 12), Vector2(10.5, 14), Vector2(13.5, 14), Vector2(14.5, 12), Vector2(14.5, 5), Vector2(13.5, 3), Vector2(10.5, 3), Vector2(9.5, 5)])
+			_arc(Vector2(12, 11), 6.0, 0.0, PI)
+			_line([Vector2(12, 17), Vector2(12, 21)])
+			_line([Vector2(8.5, 21), Vector2(15.5, 21)])
+			if kind == "mic_off":
+				_line([Vector2(4, 4), Vector2(20, 20)])
 		"camera":
 			_line([Vector2(3, 8), Vector2(21, 8), Vector2(21, 19), Vector2(3, 19), Vector2(3, 8)])
 			_line([Vector2(8, 8), Vector2(10, 5), Vector2(14, 5), Vector2(16, 8)])

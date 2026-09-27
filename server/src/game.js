@@ -35,6 +35,8 @@ const MIGRATE_DELAY_MS = 4000;
 // How far from the origin a player may be. Places put maps far from the lobby
 // (Meltopia's are 500-700 studs out), so the same room as physics parts.
 const WORLD_LIMIT = 5000;
+// How far a voice carries (studs).
+const VOICE_RANGE = 45;
 // Physics parts (unanchored): one app simulates each, the rest follow its reports.
 const PHYS_MAX_BATCH = 64;
 const PHYS_CLAIM_RANGE = 12; // how close you must be to take a part over
@@ -618,6 +620,8 @@ export class GameHub {
         return this.chat(conn, m);
       case 'hug':
         return this.hug(conn, m);
+      case 'voice':
+        return this.voice(conn, m);
       case 'emote':
         if (conn.server && conn.player && EMOTES.has(m.e) && conn.server.emotes !== false) {
           // Spamming (hearts especially) floods everyone's screen: one per cooldown.
@@ -779,6 +783,31 @@ export class GameHub {
     pl.a = ANIMS.has(m.a) || /^anim:\/\/\d{1,10}$/.test(String(m.a)) ? m.a : 'idle';
     pl.dirty = true;
     pl.posDirty = true;
+  }
+
+  /**
+   * Voice: 100 ms of the speaker's microphone (12 kHz ADPCM, base64) goes to players
+   * within earshot. Not for those whose age rules turn chat off (either way), not in
+   * servers without chat, not from someone muted, and never to someone who blocked them.
+   */
+  voice(conn, m) {
+    const server = conn.server;
+    const me = conn.player;
+    if (!server || !me || server.chat === false || !conn.rules.chat || server.muted?.has(conn.user.id)) return;
+    const d = typeof m.d === 'string' ? m.d : '';
+    if (!d || d.length > 2400 || !/^[A-Za-z0-9+/=]+$/.test(d)) return;
+    // At most ~15 packets a second (it sends 10).
+    const now = Date.now();
+    if (!me.voiceAt || now - me.voiceAt > 1000) {
+      me.voiceAt = now;
+      me.voiceN = 0;
+    }
+    if (++me.voiceN > 15) return;
+    const data = JSON.stringify({ t: 'voice', id: conn.user.id, d });
+    for (const [id, p] of server.players) {
+      if (id === conn.user.id || !p.conn.rules.chat || p.conn.blocks.has(conn.user.id)) continue;
+      if (dist(p.p, me.p) <= VOICE_RANGE) p.conn.sendRaw(data);
+    }
   }
 
   /**

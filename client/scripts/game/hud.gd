@@ -9,6 +9,8 @@ signal emote_picked(emote: String)
 signal tool_picked(id: String)
 ## ~ on a keyboard, for the platform owner's admin panel.
 signal admin_requested
+## The microphone button: voice chat on or off.
+signal mic_toggled(on: bool)
 
 var player: LocalPlayer
 var joystick: Joystick
@@ -188,7 +190,7 @@ func _ready() -> void:
 	# Top-right: camera mode + chat.
 	var tr := UI.hbox(10)
 	tr.set_anchors_preset(Control.PRESET_TOP_RIGHT)
-	tr.offset_left = -200
+	tr.offset_left = -266
 	tr.offset_right = -20
 	tr.offset_top = 16
 	tr.alignment = BoxContainer.ALIGNMENT_END
@@ -198,6 +200,14 @@ func _ready() -> void:
 		if player:
 			player.toggle_first_person())
 	tr.add_child(_cam_btn)
+	# Voice chat: tap to turn your microphone on; it lights up while you're heard.
+	_mic_btn = _icon_button("mic_off")
+	_mic_btn.toggle_mode = true
+	_mic_btn.toggled.connect(func(on: bool):
+		(_mic_btn.get_node("Icon") as Icon).kind = "mic" if on else "mic_off"
+		(_mic_btn.get_node("Icon") as Icon).queue_redraw()
+		mic_toggled.emit(on))
+	tr.add_child(_mic_btn)
 	var chat_btn := _icon_button("chat")
 	chat_btn.pressed.connect(toggle_chat)
 	tr.add_child(chat_btn)
@@ -331,6 +341,7 @@ func _icon_button(kind: String) -> Button:
 	b.add_theme_stylebox_override("pressed", sb2)
 	b.add_theme_stylebox_override("hover_pressed", sb2)
 	var ic := Icon.make(kind, 26)
+	ic.name = "Icon"
 	ic.position = Vector2(15, 15)
 	b.add_child(ic)
 	b.pressed.connect(func(): Sfx.click())
@@ -603,6 +614,12 @@ func set_server(_name: String, _players: int, _max_players: int) -> void:
 
 var chat_enabled := true
 var _chat_btn: Button
+var _mic_btn: Button
+
+
+## Green while your voice is going out.
+func set_speaking(on: bool) -> void:
+	(_mic_btn.get_node("Icon") as Icon).color = UI.MINT if on else UI.TEXT
 
 
 ## Under-13 accounts have no chat: hide the log, the input and the button.
@@ -611,6 +628,10 @@ func set_chat_enabled(on: bool) -> void:
 	on = on and _core.Chat
 	_chat_log.visible = on and not _chat_expanded
 	_chat_btn.visible = on
+	# Voice follows the same age rules as chat.
+	_mic_btn.visible = chat_enabled
+	if not chat_enabled and _mic_btn.button_pressed:
+		_mic_btn.button_pressed = false
 	if not on:
 		_set_chat_expanded(false)
 

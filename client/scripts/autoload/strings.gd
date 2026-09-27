@@ -243,6 +243,9 @@ const TABLE := {
 	"emote_sit": ["Sit", "Сесть"],
 	"emote_clap": ["Clap", "Хлопать"],
 	"emote_hug": ["Hug", "Обнимашки"],
+	"voice_hear": ["Hear voice chat", "Слышать голосовой чат"],
+	"mic_device": ["Microphone", "Микрофон"],
+	"mic_default": ["System default", "Как в системе"],
 	"hug_action": ["Hug", "Обнять"],
 	"emote_laugh": ["Laugh", "Смех"],
 
