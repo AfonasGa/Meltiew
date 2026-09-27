@@ -7,6 +7,8 @@ export const MESSAGES = {
   unauthorized: ['Please sign in', 'Нужно войти в аккаунт'],
   no_user: ['Player not found', 'Игрок не найден'],
   slow_down: ['Too many attempts, wait a minute', 'Слишком много попыток, подожди минутку'],
+  too_many_accounts: ['Too many accounts from this network today', 'С этой сети сегодня создано слишком много аккаунтов'],
+  play_first: ['Play this place before rating it', 'Сначала поиграй в этот плейс, потом оценивай'],
   bad_username: ['Username: 3–20 characters, latin letters, digits and _', 'Логин: 3–20 символов, латиница, цифры и _'],
   bad_password: ['Password must be at least 6 characters', 'Пароль должен быть от 6 символов'],
   wrong_password: ['Current password is wrong', 'Старый пароль не подходит'],

@@ -124,6 +124,9 @@ function migrate(db) {
   if (!cols.has('birthdate_changed_at')) db.exec('ALTER TABLE users ADD COLUMN birthdate_changed_at INTEGER NOT NULL DEFAULT 0');
   if (!cols.has('face')) db.exec("ALTER TABLE users ADD COLUMN face TEXT NOT NULL DEFAULT ':D'");
   if (!cols.has('hide_friends')) db.exec('ALTER TABLE users ADD COLUMN hide_friends INTEGER NOT NULL DEFAULT 0');
+  // Where the account was made from: caps sign-ups per address (bot farms).
+  if (!cols.has('reg_ip')) db.exec("ALTER TABLE users ADD COLUMN reg_ip TEXT NOT NULL DEFAULT ''");
+  db.exec('CREATE INDEX IF NOT EXISTS users_reg_ip ON users(reg_ip, created_at)');
   if (!cols.has('accessories')) {
     // Several accessories at once; the old single hat becomes the first of them.
     db.exec("ALTER TABLE users ADD COLUMN accessories TEXT NOT NULL DEFAULT '[]'");
@@ -162,6 +165,9 @@ function migrate(db) {
   add('max_players', 'INTEGER NOT NULL DEFAULT 10');
   add('comments_enabled', 'INTEGER NOT NULL DEFAULT 1');
   add('deleted', 'INTEGER NOT NULL DEFAULT 0');
+  // Votes the platform owner adds on top of the real ones (no accounts behind them).
+  add('extra_likes', 'INTEGER NOT NULL DEFAULT 0');
+  add('extra_dislikes', 'INTEGER NOT NULL DEFAULT 0');
   db.exec(`
     CREATE TABLE IF NOT EXISTS place_players (
       place_id    TEXT NOT NULL,

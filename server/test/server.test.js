@@ -218,6 +218,16 @@ test('places list, votes and owner author', async () => {
   assert.equal(r.data.place.dislikes, 1);
   r = await call('POST', '/api/places/playground/vote', { value: 0 }, users.alice);
   assert.equal(r.data.place.dislikes, 0);
+  // The owner piles votes on by hand; real ones still count on top.
+  assert.equal((await call('PATCH', '/api/admin/places/playground', { extra_dislikes: 9999 }, users.alice)).status, 403);
+  r = await call('PATCH', '/api/admin/places/playground', { extra_dislikes: 9999 }, users.nrz);
+  assert.equal(r.data.place.dislikes, 9999);
+  r = await call('POST', '/api/places/playground/vote', { value: -1 }, users.alice);
+  assert.equal(r.data.place.dislikes, 10000);
+  assert.equal(r.data.place.likes, 0);
+  await call('POST', '/api/places/playground/vote', { value: 0 }, users.alice);
+  r = await call('PATCH', '/api/admin/places/playground', { extra_dislikes: 0 }, users.nrz);
+  assert.equal(r.data.place.dislikes, 0);
   r = await call('GET', '/api/places/playground', null, users.alice);
   assert.ok(Array.isArray(r.data.servers));
 });
@@ -440,4 +450,26 @@ test('accessories: catalog, several at once, one per slot, old apps keep working
   r = await call('PATCH', '/api/me', { hat: 'tophat' }, t);
   assert.deepEqual(r.data.user.accessories.sort(), ['cattail', 'tophat']);
   assert.equal(r.data.user.hat, 'tophat');
+});
+
+test('anti-fraud: five sign-ups per address a day, only players rate a place', async () => {
+  const reg = (name, ip) =>
+    fetch(base + '/api/register', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-real-ip': ip },
+      body: JSON.stringify({ username: name, password: 'secret123', display_name: name, birthdate: '2000-01-01' }),
+    }).then(async (r) => ({ status: r.status, data: await r.json() }));
+  let farm;
+  for (let i = 0; i < 5; i++) {
+    farm = await reg(`farm${i}`, '203.0.113.7');
+    assert.equal(farm.status, 200);
+  }
+  assert.equal((await reg('farm5', '203.0.113.7')).status, 429);
+  // Another address is fine.
+  assert.equal((await reg('farmx', '203.0.113.8')).status, 200);
+  // A fresh account that never played can't like, but can take a vote back.
+  const r = await call('POST', '/api/places/playground/vote', { value: 1 }, farm.data.token);
+  assert.equal(r.status, 403);
+  assert.equal(r.data.error, 'play_first');
+  assert.equal((await call('POST', '/api/places/playground/vote', { value: 0 }, farm.data.token)).status, 200);
 });

@@ -47,7 +47,7 @@ export function createStudioRoutes(ctx) {
     daily: db.prepare('SELECT day, visits, playtime_ms FROM place_daily WHERE place_id = ? AND day >= ? ORDER BY day'),
     uniques: db.prepare('SELECT COUNT(*) AS n, COALESCE(SUM(playtime_ms), 0) AS t FROM place_players WHERE place_id = ?'),
     returning: db.prepare('SELECT COUNT(*) AS n FROM place_players WHERE place_id = ? AND visits > 1'),
-    votes: db.prepare('SELECT SUM(value = 1) AS likes, SUM(value = -1) AS dislikes FROM place_votes WHERE place_id = ?'),
+    votes: db.prepare('SELECT COALESCE(SUM(v.value = 1), 0) + p.extra_likes AS likes, COALESCE(SUM(v.value = -1), 0) + p.extra_dislikes AS dislikes FROM places p LEFT JOIN place_votes v ON v.place_id = p.id WHERE p.id = ?'),
     commentCount: db.prepare('SELECT COUNT(*) AS n FROM place_comments WHERE place_id = ?'),
     assets: db.prepare('SELECT * FROM assets WHERE owner_id = ? AND kind = ? ORDER BY created_at DESC'),
     assetUsage: db.prepare('SELECT COUNT(*) AS n, COALESCE(SUM(size), 0) AS bytes FROM assets WHERE owner_id = ? AND kind = ?'),

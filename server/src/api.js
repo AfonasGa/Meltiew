@@ -34,6 +34,9 @@ class HttpError extends Error {
   }
 }
 const bad = (code) => new HttpError(400, code);
+// Sign-ups from one address a day (a home or a school shares one).
+const REG_PER_IP_PER_DAY = 5;
+const LOCAL_IPS = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
 
 function cleanText(value, max) {
   return String(value ?? '')
@@ -131,10 +134,11 @@ export function createApi({ db, hub, renderDir, store, owner = process.env.MELTI
     // Listed: the built-in games and published (public) studio places.
     all: db.prepare("SELECT * FROM places WHERE deleted = 0 AND (kind = 'builtin' OR visibility = 'public') ORDER BY created_at"),
     one: db.prepare('SELECT * FROM places WHERE id = ?'),
-    votes: db.prepare('SELECT SUM(value = 1) AS likes, SUM(value = -1) AS dislikes FROM place_votes WHERE place_id = ?'),
+    votes: db.prepare('SELECT COALESCE(SUM(v.value = 1), 0) + p.extra_likes AS likes, COALESCE(SUM(v.value = -1), 0) + p.extra_dislikes AS dislikes FROM places p LEFT JOIN place_votes v ON v.place_id = p.id WHERE p.id = ?'),
     myVote: db.prepare('SELECT value FROM place_votes WHERE place_id = ? AND user_id = ?'),
     setVote: db.prepare('INSERT INTO place_votes (place_id, user_id, value) VALUES (?, ?, ?) ON CONFLICT(place_id, user_id) DO UPDATE SET value = excluded.value'),
     clearVote: db.prepare('DELETE FROM place_votes WHERE place_id = ? AND user_id = ?'),
+    played: db.prepare('SELECT 1 FROM place_players WHERE place_id = ? AND user_id = ?'),
     visit: db.prepare('UPDATE places SET visits = visits + 1 WHERE id = ?'),
     update: db.prepare('UPDATE places SET name = ?, name_ru = ?, description = ?, description_ru = ? WHERE id = ?'),
   };
@@ -395,7 +399,13 @@ export function createApi({ db, hub, renderDir, store, owner = process.env.MELTI
     },
 
     'POST /api/register': async (req, body) => {
-      if (!authLimiter.allow('reg:' + clientIp(req))) throw new HttpError(429, 'slow_down');
+      const ip = clientIp(req);
+      if (!authLimiter.allow('reg:' + ip)) throw new HttpError(429, 'slow_down');
+      // Someone made 1250 accounts in an hour to like their own place.
+      // (Local addresses are the tests and scripts on the machine: nginx always sends the real one.)
+      if (!LOCAL_IPS.has(ip) && db.prepare('SELECT COUNT(*) AS n FROM users WHERE reg_ip = ? AND created_at > ?').get(ip, Date.now() - 86_400_000).n >= REG_PER_IP_PER_DAY) {
+        throw new HttpError(429, 'too_many_accounts');
+      }
       const username = String(body.username ?? '').trim();
       const password = String(body.password ?? '');
       const displayName = cleanText(body.display_name || username, 24);
@@ -406,7 +416,7 @@ export function createApi({ db, hub, renderDir, store, owner = process.env.MELTI
       if (q.userByName.get(username)) throw new HttpError(409, 'taken');
       const now = Date.now();
       const info = q.insertUser.run(username, hashPassword(password), displayName, now, now);
-      db.prepare('UPDATE users SET birthdate = ? WHERE id = ?').run(body.birthdate, Number(info.lastInsertRowid));
+      db.prepare('UPDATE users SET birthdate = ?, reg_ip = ? WHERE id = ?').run(body.birthdate, ip, Number(info.lastInsertRowid));
       promoteOwner();
       const user = q.userById.get(Number(info.lastInsertRowid));
       return { token: issueSession(user.id), user: selfProfile(user) };
@@ -691,6 +701,8 @@ export function createApi({ db, hub, renderDir, store, owner = process.env.MELTI
       if (!writeLimiter.allow('vote:' + user.id)) throw new HttpError(429, 'slow_down');
       const p = visibleRow(user, params.id);
       const value = Number(body.value);
+      // Only players rate a place: bot accounts that never joined can't pile likes on.
+      if ((value === 1 || value === -1) && !pq.played.get(p.id, user.id)) throw new HttpError(403, 'play_first');
       if (value === 1 || value === -1) pq.setVote.run(p.id, user.id, value);
       else pq.clearVote.run(p.id, user.id);
       if (value === 1) economy.progress(user.id, 'like');
@@ -786,7 +798,7 @@ export function createApi({ db, hub, renderDir, store, owner = process.env.MELTI
     },
 
     'PATCH /api/admin/places/:id': (req, body, _url, params) => {
-      requireStaff(req);
+      const { user: staff } = requireStaff(req);
       const p = pq.one.get(params.id);
       if (!p) throw new HttpError(404, 'no_place');
       pq.update.run(
@@ -796,6 +808,11 @@ export function createApi({ db, hub, renderDir, store, owner = process.env.MELTI
         cleanText(body.description_ru ?? p.description_ru, 300),
         p.id,
       );
+      // The owner can pile votes on a place by hand (say, on one that bought its likes).
+      if (staff.role === 'owner' && (body.extra_likes !== undefined || body.extra_dislikes !== undefined)) {
+        const n = (v, cur) => (v === undefined ? cur : Math.max(0, Math.min(1_000_000, Math.floor(Number(v) || 0))));
+        db.prepare('UPDATE places SET extra_likes = ?, extra_dislikes = ? WHERE id = ?').run(n(body.extra_likes, p.extra_likes), n(body.extra_dislikes, p.extra_dislikes), p.id);
+      }
       return { place: placeView(pq.one.get(p.id), null) };
     },
 
