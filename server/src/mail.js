@@ -1,12 +1,14 @@
-// Email: sign-up codes. A tiny SMTP client (implicit TLS, AUTH PLAIN), enough for one
-// mailbox such as a Gmail account with an app password. Set in the service's env:
-//   MELTIEW_SMTP_HOST (smtp.gmail.com), MELTIEW_SMTP_PORT (465),
-//   MELTIEW_SMTP_USER, MELTIEW_SMTP_PASS, MELTIEW_MAIL_FROM (defaults to the user).
+// Email: sign-up codes. A tiny SMTP client. Two setups, from the service's env:
+//   our own Postfix on this machine (it signs with DKIM for narez.xyz):
+//     MELTIEW_SMTP_HOST=127.0.0.1 MELTIEW_SMTP_PORT=25 MELTIEW_MAIL_FROM=noreply@narez.xyz
+//   or a provider over implicit TLS with a login (port 465):
+//     MELTIEW_SMTP_HOST, MELTIEW_SMTP_PORT, MELTIEW_SMTP_USER, MELTIEW_SMTP_PASS, MELTIEW_MAIL_FROM
 import tls from 'node:tls';
+import net from 'node:net';
 import crypto from 'node:crypto';
 
 export function mailConfigured(env = process.env) {
-  return Boolean(env.MELTIEW_SMTP_HOST && env.MELTIEW_SMTP_USER && env.MELTIEW_SMTP_PASS);
+  return Boolean(env.MELTIEW_SMTP_HOST && (env.MELTIEW_SMTP_USER || env.MELTIEW_MAIL_FROM));
 }
 
 // Only big providers that verify their users: throwaway domains can't be used for bots.
@@ -48,7 +50,7 @@ export function hashCode(code) {
 
 const TEXT = {
   en: (code) => [`Meltiew code: ${code}`, `Your Meltiew code is ${code}\n\nIt works for 15 minutes. If you didn't ask for it, ignore this email.`],
-  ru: (code) => [`Код Meltiew: ${code}`, `Твой код для Meltiew: ${code}\n\nОн действует 15 минут. Если ты его не запрашивал, просто не обращай внимания на письмо.`],
+  ru: (code) => [`Код Meltiew: ${code}`, `Твой код для Meltiew: ${code}\n\nОн действует 15 минут. Если ты его не запрашивал(а), просто не обращай внимания на письмо.`],
 };
 
 export function sendCode(to, code, lang = 'en', env = process.env) {
@@ -81,7 +83,8 @@ export function sendMail({ to, subject, text }, env = process.env) {
   const steps = [
     [null, 220],
     ['EHLO meltiew', 250],
-    ['AUTH PLAIN ' + b64(`\0${user}\0${env.MELTIEW_SMTP_PASS}`), 235],
+    // A login only for a provider; our own local Postfix takes mail from this machine.
+    ...(user ? [['AUTH PLAIN ' + b64(`\0${user}\0${env.MELTIEW_SMTP_PASS}`), 235]] : []),
     [`MAIL FROM:<${from}>`, 250],
     [`RCPT TO:<${to}>`, 250],
     ['DATA', 354],
@@ -89,7 +92,7 @@ export function sendMail({ to, subject, text }, env = process.env) {
     ['QUIT', 221],
   ];
   return new Promise((resolve, reject) => {
-    const sock = tls.connect({ host, port, servername: host });
+    const sock = port === 465 ? tls.connect({ host, port, servername: host }) : net.connect({ host, port });
     let buf = '';
     let i = 0;
     const fail = (err) => {

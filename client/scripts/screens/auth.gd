@@ -278,6 +278,7 @@ func _on_send_code() -> void:
 		return
 	_error.visible = false
 	UI.toast(L.t("code_sent"), "ok")
+	_hint.text = L.t("code_sent")  # stays under the form, the toast goes away
 	_code.grab_focus()
 	# Another one in a minute (the server allows one a minute).
 	for s in range(60, 0, -1):
