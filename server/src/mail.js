@@ -49,21 +49,75 @@ export function hashCode(code) {
 }
 
 const TEXT = {
-  en: (code) => [`Meltiew code: ${code}`, `Your Meltiew code is ${code}\n\nIt works for 15 minutes. If you didn't ask for it, ignore this email.`],
-  ru: (code) => [`Код Meltiew: ${code}`, `Твой код для Meltiew: ${code}\n\nОн действует 15 минут. Если ты его не запрашивал(а), просто не обращай внимания на письмо.`],
+  en: {
+    subject: (code) => `${code} is your Meltiew code`,
+    title: 'Your code',
+    lead: 'Enter it in Meltiew to confirm your email.',
+    expires: 'It works for 15 minutes.',
+    ignore: "If you didn't ask for it, just ignore this email: nothing will happen.",
+    footer: 'Meltiew · a place to play and make games together',
+  },
+  ru: {
+    subject: (code) => `${code} — твой код Meltiew`,
+    title: 'Твой код',
+    lead: 'Введи его в Meltiew, чтобы подтвердить почту.',
+    expires: 'Код действует 15 минут.',
+    ignore: 'Если ты его не запрашивал(а), просто не обращай внимания на письмо: ничего не случится.',
+    footer: 'Meltiew · место, где вместе играют и делают игры',
+  },
 };
 
+const SITE = 'https://meltiew.narez.xyz';
+
+// Colours from the site (public/style.css). Tables and inline styles: that's what every
+// mail app (Gmail, Outlook, phones) draws the same way.
+function codeHtml(code, t) {
+  const digits = code.split('').join('&#8202;');
+  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="dark light"></head>
+<body style="margin:0;padding:0;background:#16141d">
+<div style="display:none;max-height:0;overflow:hidden">${t.lead} ${t.expires}</div>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#16141d;padding:32px 12px">
+<tr><td align="center">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:460px">
+  <tr><td align="center" style="padding-bottom:20px">
+    <a href="${SITE}" style="text-decoration:none"><img src="${SITE}/img/icon.png" width="56" height="56" alt="" style="display:block;border:0;border-radius:14px">
+    <div style="font:800 22px/1.2 'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#f4f1ec;padding-top:10px;letter-spacing:.5px">Meltiew</div></a>
+  </td></tr>
+  <tr><td style="background:#242030;border-radius:20px;padding:32px 28px;font-family:'Segoe UI',Roboto,Helvetica,Arial,sans-serif">
+    <div style="font-size:22px;font-weight:800;color:#f4f1ec">${t.title}</div>
+    <div style="font-size:15px;line-height:1.5;color:#9d96b0;padding-top:6px">${t.lead}</div>
+    <div style="margin:24px 0;padding:18px 0;background:#16141d;border:2px solid #b89cff;border-radius:16px;text-align:center;font:800 40px/1 'SF Mono',Consolas,'Roboto Mono',monospace;letter-spacing:10px;color:#7ee0c3">${digits}</div>
+    <div style="font-size:14px;line-height:1.5;color:#f4f1ec">${t.expires}</div>
+    <div style="font-size:13px;line-height:1.5;color:#9d96b0;padding-top:10px">${t.ignore}</div>
+  </td></tr>
+  <tr><td align="center" style="padding-top:18px;font:13px/1.5 'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#9d96b0">
+    <a href="${SITE}" style="color:#b89cff;text-decoration:none">${t.footer}</a>
+  </td></tr>
+  </table>
+</td></tr></table></body></html>`;
+}
+
 export function sendCode(to, code, lang = 'en', env = process.env) {
-  const [subject, body] = (TEXT[lang] || TEXT.en)(code);
-  return sendMail({ to, subject, text: body }, env);
+  const t = TEXT[lang] || TEXT.en;
+  const text = `${t.title}: ${code}\n\n${t.lead}\n${t.expires}\n\n${t.ignore}\n\n${SITE}`;
+  return sendMail({ to, subject: t.subject(code), text, html: codeHtml(code, t) }, env);
 }
 
 function b64(s) {
   return Buffer.from(s, 'utf8').toString('base64');
 }
 
-/** One email over SMTP; resolves when the server accepted it. */
-export function sendMail({ to, subject, text }, env = process.env) {
+// Headers and body: just the text, or the text and the HTML version side by side
+// (apps show the HTML, and the text is there for the ones that can't).
+function body(text, html) {
+  const part = (type, s) => [`Content-Type: ${type}; charset=UTF-8`, 'Content-Transfer-Encoding: base64', '', b64(s).replace(/.{76}/g, '$&\r\n')];
+  if (!html) return part('text/plain', text);
+  const edge = 'meltiew-' + crypto.randomUUID();
+  return [`Content-Type: multipart/alternative; boundary="${edge}"`, '', `--${edge}`, ...part('text/plain', text), `--${edge}`, ...part('text/html', html), `--${edge}--`];
+}
+
+/** One email over SMTP (plain text, and HTML when given); resolves when it's accepted. */
+export function sendMail({ to, subject, text, html }, env = process.env) {
   const host = env.MELTIEW_SMTP_HOST;
   const port = Number(env.MELTIEW_SMTP_PORT) || 465;
   const user = env.MELTIEW_SMTP_USER;
@@ -75,10 +129,7 @@ export function sendMail({ to, subject, text }, env = process.env) {
     `Date: ${new Date().toUTCString()}`,
     `Message-ID: <${crypto.randomUUID()}@${from.split('@')[1] || 'meltiew'}>`,
     'MIME-Version: 1.0',
-    'Content-Type: text/plain; charset=UTF-8',
-    'Content-Transfer-Encoding: base64',
-    '',
-    b64(text).replace(/.{76}/g, '$&\r\n'),
+    ...body(text, html),
   ].join('\r\n');
   const steps = [
     [null, 220],
