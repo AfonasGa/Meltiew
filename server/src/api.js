@@ -12,6 +12,7 @@ import { createBadges } from './badges.js';
 import { createAnimations } from './animations.js';
 import { createCommunities } from './communities.js';
 import path from 'node:path';
+import { mailConfigured, normalizeEmail, newCode, hashCode, sendCode } from './mail.js';
 
 const USERNAME_RE = /^[A-Za-z0-9_]{3,20}$/;
 export { LEGACY_HATS as HATS } from './accessories.js';
@@ -280,7 +281,36 @@ export function createApi({ db, hub, renderDir, store, owner = process.env.MELTI
       birthdate_change: birthdateChange(u),
       hide_friends: !!u.hide_friends,
       rules: chatRules(u.birthdate),
+      email: u.email || '',
     };
+  }
+
+  // --- email codes (sign-up and linking an email to an older account) ---
+  const CODE_TTL_MS = 15 * 60_000;
+  const CODE_TRIES = 5;
+  const CODE_EVERY_MS = 60_000; // one code per address a minute
+  const codeLimiter = new RateLimiter(6, 3_600_000); // codes an IP can ask for an hour
+  const getCode = db.prepare('SELECT * FROM email_codes WHERE email = ?');
+  const putCode = db.prepare('INSERT INTO email_codes (email, code_hash, expires_at, tries, sent_at) VALUES (?, ?, ?, 0, ?) ON CONFLICT(email) DO UPDATE SET code_hash = excluded.code_hash, expires_at = excluded.expires_at, tries = 0, sent_at = excluded.sent_at');
+  const dropCode = db.prepare('DELETE FROM email_codes WHERE email = ?');
+  const tryCode = db.prepare('UPDATE email_codes SET tries = tries + 1 WHERE email = ?');
+  const userByEmail = db.prepare("SELECT id FROM users WHERE email = ? AND email != ''");
+
+  function emailOf(body) {
+    const email = normalizeEmail(body.email);
+    if (!email) throw bad('bad_email');
+    return email;
+  }
+
+  /** Checks (and uses up) the code sent to `email`; throws if it's wrong or old. */
+  function useCode(email, code) {
+    const row = getCode.get(email);
+    if (!row || row.expires_at < Date.now() || row.tries >= CODE_TRIES) throw bad('bad_code');
+    if (hashCode(String(code ?? '').trim()) !== row.code_hash) {
+      tryCode.run(email);
+      throw bad('bad_code');
+    }
+    dropCode.run(email);
   }
 
   function relation(me, other) {
@@ -395,6 +425,8 @@ export function createApi({ db, hub, renderDir, store, owner = process.env.MELTI
       users: q.countUsers.get().n,
       time: Date.now(),
       latest_client: LATEST_CLIENT,
+      // New accounts need an email code (see mail.js).
+      email_signup: mailConfigured(),
       min_client: gate.min(),
       download: DOWNLOAD_PAGE,
     }),
@@ -406,6 +438,36 @@ export function createApi({ db, hub, renderDir, store, owner = process.env.MELTI
       if (!/^\d+\.\d+\.\d+$/.test(v)) throw bad('bad_name');
       gate.setMin(v);
       return { min_client: gate.min() };
+    },
+
+    // A code to the email, for signing up (anyone) or linking it to your account.
+    'POST /api/email/code': async (req, body) => {
+      if (!mailConfigured()) throw new HttpError(503, 'mail_off');
+      const email = emailOf(body);
+      if (userByEmail.get(email)) throw new HttpError(409, 'email_taken');
+      if (body.purpose === 'link') requireAuth(req);
+      const row = getCode.get(email);
+      if (row && Date.now() - row.sent_at < CODE_EVERY_MS) throw new HttpError(429, 'slow_down');
+      if (!codeLimiter.allow('code:' + clientIp(req))) throw new HttpError(429, 'slow_down');
+      const code = newCode();
+      putCode.run(email, hashCode(code), Date.now() + CODE_TTL_MS, Date.now());
+      try {
+        await sendCode(email, code, pickLang(req));
+      } catch (err) {
+        console.error('mail failed:', err.message);
+        dropCode.run(email);
+        throw new HttpError(502, 'mail_failed');
+      }
+      return { ok: true };
+    },
+
+    'POST /api/me/email': (req, body) => {
+      const { user } = requireAuth(req);
+      const email = emailOf(body);
+      if (userByEmail.get(email)) throw new HttpError(409, 'email_taken');
+      useCode(email, body.code);
+      db.prepare('UPDATE users SET email = ? WHERE id = ?').run(email, user.id);
+      return { user: selfProfile(q.userById.get(user.id)) };
     },
 
     'POST /api/register': async (req, body) => {
@@ -424,9 +486,16 @@ export function createApi({ db, hub, renderDir, store, owner = process.env.MELTI
       if (displayName.length < 2) throw bad('bad_name');
       if (!validBirthdate(body.birthdate)) throw bad('bad_birthdate');
       if (q.userByName.get(username)) throw new HttpError(409, 'taken');
+      // Bots flooded the chat: a new account needs a real mailbox (see mail.js).
+      let email = '';
+      if (mailConfigured()) {
+        email = emailOf(body);
+        if (userByEmail.get(email)) throw new HttpError(409, 'email_taken');
+        useCode(email, body.code);
+      }
       const now = Date.now();
       const info = q.insertUser.run(username, hashPassword(password), displayName, now, now);
-      db.prepare('UPDATE users SET birthdate = ?, reg_ip = ? WHERE id = ?').run(body.birthdate, ip, Number(info.lastInsertRowid));
+      db.prepare('UPDATE users SET birthdate = ?, reg_ip = ?, email = ? WHERE id = ?').run(body.birthdate, ip, email, Number(info.lastInsertRowid));
       promoteOwner();
       const user = q.userById.get(Number(info.lastInsertRowid));
       return { token: issueSession(user.id), user: selfProfile(user) };

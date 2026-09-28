@@ -39,6 +39,7 @@ const T = {
     role_Owner: 'Owner', role_Admin: 'Admin', role_Builder: 'Builder', role_Member: 'Member', communities_of: 'Communities',
     home: 'Home', friends: 'Friends', download: 'Download', settings: 'Settings',
     sign_in: 'Sign in', sign_up: 'Sign up', sign_out: 'Sign out',
+    email: 'Email (Gmail, Outlook, iCloud...)', email_code: 'Code from the email', send_code: 'Send code', code_sent: 'Code sent, check your email', email_title: 'Email', email_link: 'Link email', email_linked: 'Linked:',
     hero_title: 'Play, dress up and hang out with friends',
     hero_text: 'A playground with slides, trampolines, a hedge maze and parkour above the clouds. Build your Melly, invite friends and join the same server. Up to 10 players per server.',
     get_app: 'Download for Android', apk_note: 'APK · Android 7+',
@@ -122,6 +123,7 @@ const T = {
     role_Owner: 'Владелец', role_Admin: 'Админ', role_Builder: 'Строитель', role_Member: 'Участник', communities_of: 'Сообщества',
     home: 'Главная', friends: 'Друзья', download: 'Скачать', settings: 'Настройки',
     sign_in: 'Войти', sign_up: 'Регистрация', sign_out: 'Выйти',
+    email: 'Почта (Gmail, Яндекс, Mail.ru...)', email_code: 'Код из письма', send_code: 'Прислать код', code_sent: 'Код отправлен, проверь почту', email_title: 'Почта', email_link: 'Привязать почту', email_linked: 'Привязана:',
     hero_title: 'Играй, наряжайся и тусуйся с друзьями',
     hero_text: 'Площадка с горками, батутами, лабиринтом и паркуром над облаками. Собери свою Melly, позови друзей и заходите на один сервер. До 10 человек на сервер.',
     get_app: 'Скачать для Android', apk_note: 'APK · Android 7 и новее',
@@ -500,6 +502,8 @@ const pages = {
         <span class="muted">${t(rulesKey)}</span></div>
       <div class="card stack" style="grid-column:1/-1"><h3>${t('face')}</h3><span class="muted">${t('face_hint')} <a href="/shop" data-link>${t('shop')} →</a></span>
         <div class="faces">${Object.entries(FACE_SLUGS).filter(([id]) => (me.owned?.faces || [':D', ':)']).includes(id) || me.face === id).map(([id, slug]) => `<button class="face ${me.face === id ? 'on' : ''}" data-face="${esc(id)}" title="${esc(id)}"><img src="/img/faces/${slug}.png" alt="${esc(id)}"></button>`).join('')}</div></div>
+      <form class="card stack" id="em"><h3>${t('email_title')}</h3>
+        ${me.email ? `<div><span class="muted">${t('email_linked')}</span> <b>${esc(me.email)}</b></div>` : `${emailFields()}<div class="error"></div><button class="btn ghost">${t('email_link')}</button>`}</form>
       <form class="card stack" id="pw"><h3>${t('change_password')}</h3>
         <input type="password" name="old" placeholder="${t('current_password')}" required>
         <input type="password" name="new" placeholder="${t('new_password')}" minlength="6" required>
@@ -512,6 +516,16 @@ const pages = {
       catch (e) { toast(e.message, 'error'); return false; }
     };
     $('#hf').addEventListener('change', (e) => patch({ hide_friends: e.target.checked }));
+    if (!me.email) {
+      wireSendCode($('#em'), 'link');
+      $('#em').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        try {
+          const r = await api('POST', '/api/me/email', { email: e.target.email.value, code: e.target.code.value });
+          state.me = r.user; toast(t('saved')); render();
+        } catch (ex) { $('.error', e.target).textContent = ex.message; }
+      });
+    }
     $('#setbd')?.addEventListener('click', async () => { if (await askBirthdate(true)) render(); });
     $('#changebd')?.addEventListener('click', async () => { if (await askBirthdate(true, true)) render(); });
     root.querySelectorAll('[data-face]').forEach((b) => b.addEventListener('click', async () => {
@@ -553,6 +567,32 @@ function landing(root) {
     .catch(() => { $('#srv').textContent = t('server_down'); });
 }
 
+// Email + code (+ "send code"): signing up, or linking an email in settings.
+function emailFields() {
+  return `<div class="row" style="gap:8px"><input name="email" type="email" class="grow" placeholder="${t('email')}" autocomplete="email" required>
+      <button type="button" class="btn small ghost" data-send-code>${t('send_code')}</button></div>
+    <input name="code" inputmode="numeric" maxlength="6" placeholder="${t('email_code')}" autocomplete="one-time-code" required>`;
+}
+
+function wireSendCode(form, purpose) {
+  const btn = $('[data-send-code]', form);
+  btn.addEventListener('click', async () => {
+    const err = $('.error', form);
+    btn.disabled = true;
+    try {
+      await api('POST', '/api/email/code', { email: form.email.value, purpose });
+      err.textContent = '';
+      toast(t('code_sent'));
+      form.code.focus();
+      let s = 60;
+      const tick = setInterval(() => {
+        btn.textContent = --s > 0 ? String(s) : t('send_code');
+        if (s <= 0) { clearInterval(tick); btn.disabled = false; }
+      }, 1000);
+    } catch (ex) { err.textContent = ex.message; btn.disabled = false; }
+  });
+}
+
 function authPage(root, mode) {
   const reg = mode === 'register';
   root.innerHTML = `<div style="display:grid;place-items:center;min-height:60vh"><form class="card modal stack" id="auth">
@@ -562,11 +602,13 @@ function authPage(root, mode) {
     <input name="password" type="password" placeholder="${t('password')}" autocomplete="${reg ? 'new-password' : 'current-password'}" required>
     ${reg ? `<input name="password2" type="password" placeholder="${t('repeat')}" required>
       <label class="muted">${t('birthdate')}<input name="birthdate" type="date" required max="${new Date().toISOString().slice(0, 10)}"></label>
-      <span class="muted" style="font-size:13px;margin-top:-6px">${t('birthdate_why')}</span>` : ''}
+      <span class="muted" style="font-size:13px;margin-top:-6px">${t('birthdate_why')}</span>
+      ${emailFields()}` : ''}
     <div class="error"></div>
     <button class="btn big">${t(reg ? 'create' : 'sign_in')}</button>
     <p class="muted" style="margin:0;text-align:center">${t(reg ? 'have_account' : 'no_account')} <a href="${reg ? '/login' : '/register'}" data-link style="color:var(--accent)">${t(reg ? 'sign_in' : 'sign_up')}</a></p>
   </form></div>`;
+  if (reg) wireSendCode($('#auth'), 'register');
   $('#auth').addEventListener('submit', async (e) => {
     e.preventDefault();
     const f = Object.fromEntries(new FormData(e.target));

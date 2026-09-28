@@ -13,6 +13,9 @@ const WINDOW_MS = 1000; // horizontal speed is measured over this long
 const LONG_WINDOW_MS = 3000;
 const LONG_FACTOR = 1.12;
 const LONG_SLACK = 3;
+// ...and over 10 seconds, tighter still: a small speed-up that runs for long.
+const LONGEST_WINDOW_MS = 10000;
+const LONGEST_FACTOR = 1.06;
 // The app sends where it is 15 times a second at most; its clock sped up sends more.
 // Counted over RATE_WINDOW_MS; twice over the limit in a row (a network hiccup that
 // delivers a backlog at once happens only once) is a sped-up clock.
@@ -24,6 +27,11 @@ const SLACK_H = 4; // metres of slack for lag and rounding
 const SLACK_RISE = 3;
 const TELEPORT_SLACK = 12; // a single jump this far beyond the limit is a teleport
 const DECAY_MS = 4000; // one violation point fades every this many ms
+// Violations one after another (each within this long of the last) cost more each time:
+// running too fast and taking the snap-back every few seconds would otherwise never add
+// up to a kick.
+const STREAK_MS = 10000;
+const STREAK_MAX = 5;
 export const KICK_POINTS = 14;
 const POINTS = { speed: 1, rise: 2, ceiling: 3, teleport: 3, fly: 2, timer: 4 };
 // In the air (Studio places, which tell us what's under each player): lag and the
@@ -160,6 +168,11 @@ export class MoveGuard {
       const secs = Math.max((now - old.t) / 1000, 0.2);
       if (distH(pos, old.p) > maxH * secs * 1.25 + SLACK_H) return this._violate('speed', now, old.p);
     }
+    const oldest = this._sampleBefore(now - LONGEST_WINDOW_MS);
+    if (oldest && !inGrace && now - oldest.t < LONGEST_WINDOW_MS + 2000) {
+      const secs = (now - oldest.t) / 1000;
+      if (distH(pos, oldest.p) > maxH * secs * LONGEST_FACTOR + LONG_SLACK) return this._violate('speed', now, oldest.p);
+    }
     const older = this._sampleBefore(now - LONG_WINDOW_MS);
     if (older && !inGrace && now - older.t < LONG_WINDOW_MS + 1500) {
       const secs = (now - older.t) / 1000;
@@ -193,8 +206,9 @@ export class MoveGuard {
     const apex = (jump * jump) / (2 * g) + APEX_SLACK;
     const base = this.base || { p: pos.slice(), t: now };
     if (limits.grounded || free) {
-      // Landed higher than a jump from where they took off can reach: they flew up there.
-      if (this.air && limits.standing && !free && pos[1] > base.p[1] + apex) {
+      // Standing higher than a jump from where they took off can reach: they flew up
+      // there (even in one quick hop between two updates).
+      if (limits.standing && !free && pos[1] > base.p[1] + apex) {
         this.air = null;
         return this._violate('fly', now, base.p);
       }
@@ -237,15 +251,17 @@ export class MoveGuard {
   _accept(pos, now) {
     this.good = pos.slice();
     this.samples.push({ t: now, p: pos.slice() });
-    while (this.samples.length > 2 && now - this.samples[0].t > RISE_WINDOW_MS + 500) this.samples.shift();
-    if (this.samples.length > 120) this.samples.splice(0, this.samples.length - 120);
+    while (this.samples.length > 2 && now - this.samples[0].t > LONGEST_WINDOW_MS + 2500) this.samples.shift();
+    if (this.samples.length > 300) this.samples.splice(0, this.samples.length - 300);
     return null;
   }
 
   // `back`: where the cheating started (start of the measured window), else the last good spot.
   _violate(reason, now, back = null) {
     if (back) this.good = back.slice();
-    this.points += POINTS[reason] || 1;
+    this.streak = now - (this.lastViolation || -Infinity) < STREAK_MS ? Math.min((this.streak || 1) + 1, STREAK_MAX) : 1;
+    this.lastViolation = now;
+    this.points += (POINTS[reason] || 1) * this.streak;
     this.total += 1;
     this.lastReason = reason;
     // The rejected position isn't recorded; the player goes back to the last good one.

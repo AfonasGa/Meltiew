@@ -373,3 +373,82 @@ test('speedhack: one network hiccup delivering a backlog is not a sped-up clock'
   }
   assert.ok(!bad.includes('timer'), JSON.stringify(bad));
 });
+
+test('spider: climbing a wall of stacked bricks is caught, standing on its top is fine', () => {
+  const I = [1, 0, 0, 0, 1, 0, 0, 0, 1];
+  // floor, and a wall at x = 10..11 made of 1-high bricks up to y = 10
+  const boxes = [[0, -1, 0, 100, 1, 100, ...I, 2]];
+  for (let k = 0; k < 10; k++) boxes.push([10.5, k + 0.5, 0, 0.5, 0.5, 3, ...I, 2]);
+  const solids = new Occluders(boxes, 2);
+  // Beside the wall (capsule touching it), 0.3 above a brick seam: not a floor.
+  assert.equal(solids.standing([9.6, 4.3, 0]), false);
+  assert.equal(solids.standing([10.5, 10.02, 0]), true);
+  const g = new MoveGuard([9.5, 0, 0], 0);
+  const bad = [];
+  let t = 2000;
+  for (let k = 0; k < 60; k++) {
+    t += STEP;
+    const p = [9.6, k * 0.2, 0];
+    const standing = solids.standing(p);
+    const r = g.check(p, { ...S, grounded: standing, standing, floating: false, climb: false }, t);
+    if (r && !r.silent) bad.push(r.reason);
+  }
+  assert.ok(bad.includes('fly'), JSON.stringify(bad));
+});
+
+test('fly: popping up onto a high ledge between two updates is caught', () => {
+  const I = [1, 0, 0, 0, 1, 0, 0, 0, 1];
+  const solids = new Occluders([[0, -1, 0, 100, 1, 100, ...I, 2], [5, 3, 0, 2, 3, 2, ...I, 2]], 2);
+  const g = new MoveGuard([2, 0, 0], 0);
+  const bad = [];
+  let t = 2000;
+  for (const p of [[2, 0, 0], [2.3, 0, 0], [4.5, 6.02, 0], [4.8, 6.02, 0]]) {
+    t += STEP;
+    const standing = solids.standing(p);
+    const r = g.check(p, { ...S, grounded: standing, standing, floating: false, climb: false }, t);
+    if (r && !r.silent) bad.push(r.reason);
+  }
+  assert.ok(bad.includes('fly'), JSON.stringify(bad));
+});
+
+test('speedhack: a small 1.15x speed-up held for long is caught', () => {
+  const g = new MoveGuard([0, 0, 0], 0);
+  const bad = [];
+  let x = 0;
+  for (let t = 2000; t < 20000; t += 1000 / 15) {
+    x += (S.sprint * 1.15) / 15;
+    const r = g.check([x, 0, 0], { ...S, grounded: true, standing: true }, t);
+    if (r && !r.silent) bad.push(r.reason);
+    if (r) x = g.good[0];
+  }
+  assert.ok(bad.includes('speed'), JSON.stringify(bad));
+});
+
+test('running too fast and taking the snap-back every few seconds adds up to a kick', () => {
+  const g = new MoveGuard([0, 0, 0], 0);
+  let x = 0;
+  let t = 2000;
+  for (let k = 0; k < 600 && !g.shouldKick; k++) {
+    t += 1000 / 15;
+    x += (S.sprint * 1.8) / 15;
+    const r = g.check([x, 0, 0], { ...S, grounded: true, standing: true }, t);
+    if (r && !r.silent) x = g.good[0];
+  }
+  assert.ok(g.shouldKick, 'never kicked');
+  assert.ok(t - 2000 < 30000, `took ${t - 2000} ms`);
+});
+
+test('two lag spikes in a row are not a kick', () => {
+  const g = new MoveGuard([0, 0, 0], 0);
+  let t = 2000;
+  let x = 0;
+  for (let k = 0; k < 450; k++) {
+    t += 1000 / 15;
+    x += S.walk / 15;
+    // twice, a burst of 15 studs at once (a lagged backlog)
+    if (k === 100 || k === 160) x += 15;
+    const r = g.check([x, 0, 0], { ...S, grounded: true, standing: true }, t);
+    if (r && !r.silent) x = g.good[0];
+  }
+  assert.ok(!g.shouldKick, `points ${g.points}`);
+});

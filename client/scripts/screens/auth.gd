@@ -12,6 +12,10 @@ var _display_row: Control
 var _password2_row: Control
 var _birthday: BirthdayInput
 var _birthday_row: Control
+var _email_row: Control
+var _email: LineEdit
+var _code: LineEdit
+var _send_code: Button
 var _submit: Button
 var _error: Label
 var _hint: Label
@@ -116,6 +120,26 @@ func _ready() -> void:
 	pair2.add_child(_password2)
 	for e in [_username, _display, _password, _password2]:
 		e.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	# Signing up: a code sent to your email (Gmail, Outlook, iCloud and such).
+	var pair3 := BoxContainer.new()
+	pair3.add_theme_constant_override("separation", 14)
+	form.add_child(pair3)
+	_pairs.append(pair3)
+	_email_row = pair3
+	var email_box := UI.hbox(8)
+	email_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	pair3.add_child(email_box)
+	_email = UI.input(L.t("email"))
+	_email.max_length = 120
+	_email.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	email_box.add_child(_email)
+	_send_code = UI.button(L.t("send_code"), "ghost", 44)
+	_send_code.pressed.connect(_on_send_code)
+	email_box.add_child(_send_code)
+	_code = UI.input(L.t("email_code"))
+	_code.max_length = 6
+	_code.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	pair3.add_child(_code)
 	var bd := UI.vbox(6)
 	bd.add_child(UI.label(L.t("bd_label"), 15, UI.MUTED, "bold"))
 	_birthday = BirthdayInput.new()
@@ -174,6 +198,7 @@ func _set_mode(mode: String) -> void:
 	_display_row.visible = reg
 	_password2_row.visible = reg
 	_birthday_row.visible = reg
+	_email_row.visible = reg
 	_submit.text = L.t("create_account") if reg else L.t("sign_in")
 	_hint.text = L.t("register_hint") if reg else L.t("login_hint")
 	_error.visible = false
@@ -221,6 +246,8 @@ func _on_submit() -> void:
 		if body.birthdate == "":
 			_show_error(L.t("bd_incomplete"))
 			return
+		body.email = _email.text.strip_edges()
+		body.code = _code.text.strip_edges()
 		path = "/api/register"
 	_submit.disabled = true
 	_submit.text = L.t("one_sec")
@@ -236,6 +263,30 @@ func _on_submit() -> void:
 	UI.toast(L.t("welcome_name", [r.data.user.display_name]), "ok")
 	Busts.sync_my_render()
 	UI.goto("res://scenes/main_menu.tscn")
+
+
+func _on_send_code() -> void:
+	var email := _email.text.strip_edges()
+	if not "@" in email:
+		_show_error(L.t("bad_email"))
+		return
+	_send_code.disabled = true
+	var r := await Api.request("POST", "/api/email/code", {"email": email, "purpose": "register"})
+	if not r.ok:
+		_send_code.disabled = false
+		_show_error(r.message)
+		return
+	_error.visible = false
+	UI.toast(L.t("code_sent"), "ok")
+	_code.grab_focus()
+	# Another one in a minute (the server allows one a minute).
+	for s in range(60, 0, -1):
+		_send_code.text = str(s)
+		await get_tree().create_timer(1.0).timeout
+		if not is_instance_valid(_send_code):
+			return
+	_send_code.text = L.t("send_code")
+	_send_code.disabled = false
 
 
 func _randomize_look() -> void:

@@ -1033,6 +1033,11 @@ local function setProp(inst, key, value, silent)
 		return
 	end
 	d.props[key] = value
+	if (key == "Position" or key == "Rotation") and d.class.isA.BasePart then
+		-- When a part last moved: the anti-cheat's own footing check knows where parts
+		-- were a moment ago; for ones moving now (lifts, platforms) it asks here.
+		d.movedAt = simTime
+	end
 	if not silent and inScope(inst) then
 		emitSet(inst, key, value)
 	end
@@ -4214,7 +4219,10 @@ end
 local function footing(pos, solid)
 	local grounded, climb = false, false
 	for _, part in solid do
-		if not grounded then
+		-- Only parts moving now or lately (still ones: the server checks those itself).
+		local d = D[part]
+		local moving = d.props.Anchored == false or (d.movedAt ~= nil and simTime - d.movedAt < 2)
+		if not grounded and moving then
 			for _, o in { v3(0, 0, 0), v3(0.4, 0, 0), v3(-0.4, 0, 0), v3(0, 0, 0.4), v3(0, 0, -0.4) } do
 				if underFeet(part, pos + o) then
 					grounded = true

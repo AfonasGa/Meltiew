@@ -504,7 +504,7 @@ test('hug: taking open arms puts you face to face; only near someone waiting for
   const mine = await a.next((m) => m.t === 'hug');
   assert.equal(mine.with, wb.you);
   await new Promise((res) => setTimeout(res, 100));
-  assert.deepEqual(got[0].pos, [0, 0.6, 14]);
+  assert.deepEqual(got[0].pos.map((v) => +v.toFixed(3)), [0, 0.6, 14.55]);
   a.close();
   b.close();
 });

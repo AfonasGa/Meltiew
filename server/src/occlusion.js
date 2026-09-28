@@ -104,7 +104,30 @@ export class Occluders {
         if (box.seen === stamp) continue;
         box.seen = stamp;
         if (pos[1] < box.lo[1] - 1 || pos[1] > box.hi[1] + 2 || pos[0] < box.lo[0] - 1 || pos[0] > box.hi[0] + 1 || pos[2] < box.lo[2] - 1 || pos[2] > box.hi[2] + 1) continue;
-        for (const [ox, oz] of FOOT) if (underFeet(box, [pos[0] + ox, pos[1], pos[2] + oz])) return true;
+        for (const [ox, oz] of FOOT) {
+          const at = underFeet(box, [pos[0] + ox, pos[1], pos[2] + oz]);
+          // A top covered by another block (bricks stacked into a wall) isn't a floor:
+          // that's how a "spider" climbs any wall.
+          if (at && !this.inside([at[0], at[1] + 0.15, at[2]])) return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  /** Is the point inside any of the boxes? */
+  inside(p) {
+    const lists = [this.grid.get('big'), this.grid.get(key(Math.floor(p[0] / CELL), Math.floor(p[2] / CELL)))];
+    for (const list of lists) {
+      if (!list) continue;
+      for (const i of list) {
+        const box = this.boxes[i];
+        if (p[0] < box.lo[0] || p[0] > box.hi[0] || p[1] < box.lo[1] || p[1] > box.hi[1] || p[2] < box.lo[2] || p[2] > box.hi[2]) continue;
+        const m = box.m;
+        const r = [p[0] - box.c[0], p[1] - box.c[1], p[2] - box.c[2]];
+        let ok = true;
+        for (let j = 0; j < 3 && ok; j++) if (Math.abs(m[j] * r[0] + m[3 + j] * r[1] + m[6 + j] * r[2]) > box.h[j]) ok = false;
+        if (ok) return true;
       }
     }
     return false;
@@ -115,6 +138,7 @@ const FOOT = [[0, 0], [0.4, 0], [-0.4, 0], [0, 0.4], [0, -0.4]];
 const REACH = 0.8; // how far below the feet the ground may be (rounding, steps, slopes)
 
 // The same test as the runtime's footing: the box's nearest point is below the feet.
+// Returns where the feet touch it (null if they don't).
 function underFeet(box, feet) {
   const m = box.m;
   const r = [feet[0] - box.c[0], feet[1] - box.c[1], feet[2] - box.c[2]];
@@ -127,17 +151,17 @@ function underFeet(box, feet) {
     if (d[j] !== 0) inside = false;
   }
   if (inside) {
-    if (box.moving) return true; // somewhere on a moving thing's reach
+    if (box.moving) return feet; // somewhere on a moving thing's reach
     // In it: fine near its top (sunk in a little, a slope), not deep inside a wall.
     const u = [r[0], r[1] + 0.8, r[2]];
-    for (let j = 0; j < 3; j++) if (Math.abs(m[j] * u[0] + m[3 + j] * u[1] + m[6 + j] * u[2]) > box.h[j]) return true;
-    return false;
+    for (let j = 0; j < 3; j++) if (Math.abs(m[j] * u[0] + m[3 + j] * u[1] + m[6 + j] * u[2]) > box.h[j]) return [feet[0], feet[1] + 0.8 - 0.15, feet[2]];
+    return null;
   }
   const wx = m[0] * d[0] + m[1] * d[1] + m[2] * d[2];
   const wy = m[3] * d[0] + m[4] * d[1] + m[5] * d[2];
   const wz = m[6] * d[0] + m[7] * d[1] + m[8] * d[2];
   const len = Math.hypot(wx, wy, wz);
-  return len <= REACH && wy >= len * 0.6;
+  return len <= REACH && wy >= len * 0.6 ? [feet[0] - wx, feet[1] - wy, feet[2] - wz] : null;
 }
 
 const key = (cx, cz) => (cx + 4096) * 8192 + (cz + 4096);

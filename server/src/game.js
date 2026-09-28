@@ -876,7 +876,7 @@ export class GameHub {
     if (other.a !== 'hug' || dist(me.p, other.p) > 12) return;
     const yaw = Number(other.r) || 0;
     // Where they face: the app turns Melly by `yaw`, facing (-sin, 0, -cos).
-    const front = [other.p[0] - Math.sin(yaw) * 1.5, other.p[1], other.p[2] - Math.cos(yaw) * 1.5];
+    const front = [other.p[0] - Math.sin(yaw) * 0.95, other.p[1], other.p[2] - Math.cos(yaw) * 0.95];
     me.guard.teleportTo(front);
     conn.send({ t: 'hug', with: other.user.id, pos: front, r: yaw + Math.PI });
     other.conn.send({ t: 'hug', with: me.user.id });
@@ -891,7 +891,7 @@ export class GameHub {
     // were doing a moment ago: their app hasn't heard about it yet.
     server.recentLimits ??= new Map();
     const t = Date.now();
-    const hist = (server.recentLimits.get(userId) || []).filter((h) => t - h.t <= 3500);
+    const hist = (server.recentLimits.get(userId) || []).filter((h) => t - h.t <= 11000);
     hist.push({ t, walk: cur.walk, sprint: cur.sprint, jump: cur.jump });
     server.recentLimits.set(userId, hist);
     for (const h of hist) {

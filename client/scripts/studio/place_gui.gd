@@ -196,13 +196,19 @@ func _build(id: String) -> void:
 		_build(k)
 
 
+## Clicks, and on phones taps by any finger: the mouse Godot makes from a touch follows
+## only one finger, and that one is usually busy with the joystick or the camera. So
+## touches are handled here themselves and that made-up mouse is ignored.
 func _button_input(id: String, e: InputEvent) -> void:
 	if editing:
 		return
-	if e is InputEventMouseButton and e.button_index == MOUSE_BUTTON_LEFT:
-		var ctl: Control = _controls.get(id)
-		if ctl == null:
-			return
+	var ctl: Control = _controls.get(id)
+	if ctl == null:
+		return
+	if e is InputEventMouseButton and e.device == InputEvent.DEVICE_ID_EMULATION:
+		ctl.accept_event()
+		return
+	if (e is InputEventMouseButton and e.button_index == MOUSE_BUTTON_LEFT) or e is InputEventScreenTouch:
 		if e.pressed:
 			ctl.set_meta("down", true)
 			if tree.prop(id, "AutoButtonColor") if tree.cls(id) == "TextButton" else true:

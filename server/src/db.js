@@ -127,6 +127,17 @@ function migrate(db) {
   // Where the account was made from: caps sign-ups per address (bot farms).
   if (!cols.has('reg_ip')) db.exec("ALTER TABLE users ADD COLUMN reg_ip TEXT NOT NULL DEFAULT ''");
   db.exec('CREATE INDEX IF NOT EXISTS users_reg_ip ON users(reg_ip, created_at)');
+  // A confirmed email (normalized, see mail.js): required to sign up, optional for older
+  // accounts. One account per address.
+  if (!cols.has('email')) db.exec("ALTER TABLE users ADD COLUMN email TEXT NOT NULL DEFAULT ''");
+  db.exec("CREATE UNIQUE INDEX IF NOT EXISTS users_email ON users(email) WHERE email != ''");
+  db.exec(`CREATE TABLE IF NOT EXISTS email_codes (
+    email      TEXT PRIMARY KEY,
+    code_hash  TEXT NOT NULL,
+    expires_at INTEGER NOT NULL,
+    tries      INTEGER NOT NULL DEFAULT 0,
+    sent_at    INTEGER NOT NULL
+  )`);
   if (!cols.has('accessories')) {
     // Several accessories at once; the old single hat becomes the first of them.
     db.exec("ALTER TABLE users ADD COLUMN accessories TEXT NOT NULL DEFAULT '[]'");
