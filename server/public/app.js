@@ -39,6 +39,8 @@ const T = {
     role_Owner: 'Owner', role_Admin: 'Admin', role_Builder: 'Builder', role_Member: 'Member', communities_of: 'Communities',
     home: 'Home', friends: 'Friends', download: 'Download', settings: 'Settings',
     sign_in: 'Sign in', sign_up: 'Sign up', sign_out: 'Sign out',
+    gw_title: 'Giveaway', gw_prize: 'Prize', gw_orbs: 'orbs', gw_pieces: 'pieces', gw_enter: 'Take part', gw_in: "You're in", gw_left: 'Ends in', gw_people: 'taking part', gw_won: 'Winner', gw_nobody: 'Nobody took part', gw_need_email: 'One account per network, email required',
+    gw_admin: 'Giveaway', gw_name: 'Name', gw_amount: 'How much', gw_until: 'Until', gw_start: 'Start', gw_stop: 'Stop the current one', gw_running: 'Running now:',
     email: 'Email (Gmail, Outlook, iCloud...)', email_code: 'Code from the email', send_code: 'Send code', code_sent: 'Code sent! No email? Check the Spam folder', email_title: 'Email', email_link: 'Link email', email_linked: 'Linked:',
     hero_title: 'Play, dress up and hang out with friends',
     hero_text: 'A playground with slides, trampolines, a hedge maze and parkour above the clouds. Build your Melly, invite friends and join the same server. Up to 10 players per server.',
@@ -123,6 +125,8 @@ const T = {
     role_Owner: 'Владелец', role_Admin: 'Админ', role_Builder: 'Строитель', role_Member: 'Участник', communities_of: 'Сообщества',
     home: 'Главная', friends: 'Друзья', download: 'Скачать', settings: 'Настройки',
     sign_in: 'Войти', sign_up: 'Регистрация', sign_out: 'Выйти',
+    gw_title: 'Розыгрыш', gw_prize: 'Приз', gw_orbs: 'орбов', gw_pieces: 'кусочков', gw_enter: 'Участвовать', gw_in: 'Ты участвуешь', gw_left: 'До конца', gw_people: 'участвуют', gw_won: 'Победитель', gw_nobody: 'Никто не участвовал', gw_need_email: 'Один аккаунт с одной сети, нужна почта',
+    gw_admin: 'Розыгрыш', gw_name: 'Название', gw_amount: 'Сколько', gw_until: 'До', gw_start: 'Запустить', gw_stop: 'Остановить текущий', gw_running: 'Сейчас идёт:',
     email: 'Почта (Gmail, Яндекс, Mail.ru...)', email_code: 'Код из письма', send_code: 'Прислать код', code_sent: 'Код отправлен! Нет письма? Загляни в папку «Спам»', email_title: 'Почта', email_link: 'Привязать почту', email_linked: 'Привязана:',
     hero_title: 'Играй, наряжайся и тусуйся с друзьями',
     hero_text: 'Площадка с горками, батутами, лабиринтом и паркуром над облаками. Собери свою Melly, позови друзей и заходите на один сервер. До 10 человек на сервер.',
@@ -1695,8 +1699,25 @@ async function adminPage(root) {
       ['st_servers', st.servers], ['st_playing', st.playing], ['st_banned', st.banned], ['st_uptime', up], ['st_memory', st.memory_mb + ' MB']];
     box.innerHTML = `<div class="tiles">${tiles.map(([k, v]) => `<div class="card tile"><span class="muted">${t(k)}</span><b>${esc(v)}</b></div>`).join('')}</div>
       <form class="card stack" id="ann"><h3>${t('announce')}</h3><input name="text" maxlength="200" required><button class="btn">${t('send')}</button></form>
+      ${owner ? `<form class="card stack" id="gwf"><h3>🎁 ${t('gw_admin')}</h3>
+        <input name="title" maxlength="60" placeholder="${t('gw_name')}" required>
+        <div class="row" style="gap:8px"><input name="amount" type="number" min="1" max="1000000" placeholder="${t('gw_amount')}" required class="grow">
+          <select name="currency"><option value="orbs">${t('gw_orbs')}</option><option value="pieces">${t('gw_pieces')}</option></select></div>
+        <label class="muted">${t('gw_until')}<input name="ends" type="datetime-local" required></label>
+        <button class="btn">${t('gw_start')}</button><button type="button" class="btn ghost" id="gwstop">${t('gw_stop')}</button></form>` : ''}
       ${owner ? `<form class="card stack" id="minv"><h3>${t('min_version')}</h3><span class="muted">${t('min_version_hint')}</span>
         <input name="version" value="${esc(health.min_client)}" pattern="\\d+\\.\\d+\\.\\d+" required><button class="btn ghost">${t('apply')}</button></form>` : ''}`;
+    $('#gwf')?.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const f = e.target;
+      try {
+        await api('POST', '/api/admin/giveaway', { title: f.title.value, amount: Number(f.amount.value), currency: f.currency.value, ends_at: new Date(f.ends.value).getTime() });
+        toast(t('saved')); giveawayBanner();
+      } catch (ex) { toast(ex.message, 'error'); }
+    });
+    $('#gwstop')?.addEventListener('click', async () => {
+      try { await api('DELETE', '/api/admin/giveaway'); toast(t('saved')); giveawayBanner(); } catch (ex) { toast(ex.message, 'error'); }
+    });
     $('#ann').addEventListener('submit', async (e) => {
       e.preventDefault();
       try { await api('POST', '/api/admin/announce', { text: e.target.text.value }); e.target.reset(); toast(t('sent_ok')); }
@@ -1812,6 +1833,47 @@ function go(path) {
   render();
 }
 
+// The owner's giveaway, on top of every page while it runs (and a day after, with the winner).
+let gwTimer = 0;
+async function giveawayBanner() {
+  let el = $('#gw');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'gw';
+    $('#app').before(el);
+  }
+  let g = null;
+  try { g = (await api('GET', '/api/giveaway')).giveaway; } catch { /* no banner */ }
+  clearInterval(gwTimer);
+  if (!g) { el.innerHTML = ''; return; }
+  const prize = `${g.amount.toLocaleString()} ${t(g.currency === 'pieces' ? 'gw_pieces' : 'gw_orbs')}`;
+  const left = () => {
+    const s = Math.max(0, Math.floor((g.ends_at - Date.now()) / 1000));
+    const d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600), m = Math.floor((s % 3600) / 60);
+    const [ud, uh, um, us] = state.lang === 'ru' ? ['д', 'ч', 'м', 'с'] : ['d', 'h', 'm', 's'];
+    return d > 0 ? `${d}${ud} ${h}${uh}` : h > 0 ? `${h}${uh} ${m}${um}` : `${m}${um} ${s % 60}${us}`;
+  };
+  const action = g.done
+    ? `<b>${g.winner ? `${t('gw_won')}: <a href="/u/${encodeURIComponent(g.winner.username)}" data-link>${esc(g.winner.display_name)}</a>` : t('gw_nobody')}</b>`
+    : g.entered ? `<span class="btn small ghost" style="pointer-events:none">✓ ${t('gw_in')}</span>`
+    : `<button class="btn small mint" id="gw-enter">${t('gw_enter')}</button>`;
+  el.innerHTML = `<div class="card row" style="margin:12px auto 0;max-width:1180px;gap:14px;flex-wrap:wrap;border:2px solid var(--accent)">
+    <div class="grow"><div class="muted" style="font-size:13px;font-weight:800;letter-spacing:.5px">🎁 ${t('gw_title').toUpperCase()}</div>
+      <b style="font-size:20px">${esc(g.title)}</b>
+      <div class="muted">${t('gw_prize')}: <b style="color:var(--mint)">${prize}</b> · ${g.entries} ${t('gw_people')}${g.done ? '' : ` · ${t('gw_left')}: <b id="gw-left">${left()}</b>`}</div>
+      ${g.done || g.entered ? '' : `<div class="muted" style="font-size:13px">${t('gw_need_email')}</div>`}</div>
+    ${action}</div>`;
+  if (!g.done) gwTimer = setInterval(() => {
+    const l = $('#gw-left');
+    if (l) l.textContent = left();
+    if (Date.now() > g.ends_at + 6000) giveawayBanner();
+  }, 1000);
+  $('#gw-enter')?.addEventListener('click', async () => {
+    if (!state.me) { sessionStorage.setItem('after_login', location.pathname); return go('/login'); }
+    try { await api('POST', '/api/giveaway/enter'); giveawayBanner(); } catch (e) { toast(e.message, 'error'); }
+  });
+}
+
 async function render() {
   const path = location.pathname;
   cleanups.forEach((fn) => fn());
@@ -1819,6 +1881,7 @@ async function render() {
   document.documentElement.lang = state.lang;
   renderNav(path);
   pollCounts();
+  giveawayBanner();
   const root = $('#app');
   root.innerHTML = '<div class="loader"><i></i></div>';
   try {

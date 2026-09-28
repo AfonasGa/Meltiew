@@ -13,6 +13,7 @@ import { createAnimations } from './animations.js';
 import { createCommunities } from './communities.js';
 import path from 'node:path';
 import { mailConfigured, normalizeEmail, newCode, hashCode, sendCode } from './mail.js';
+import { createGiveaways } from './giveaways.js';
 
 const USERNAME_RE = /^[A-Za-z0-9_]{3,20}$/;
 export { LEGACY_HATS as HATS } from './accessories.js';
@@ -403,6 +404,15 @@ export function createApi({ db, hub, renderDir, store, owner = process.env.MELTI
 
   const badges = createBadges({ db, hub, mediaDir: store.mediaDir, HttpError, bad, cleanText, requireAuth, authenticate });
   const animations = createAnimations({ db, HttpError, bad, cleanText, requireAuth, writeLimiter });
+  const giveaways = createGiveaways({ db, economy, HttpError, bad, cleanText, requireAuth, clientIp, log: (m) => console.log(new Date().toISOString(), m) });
+  const giveawayTimer = setInterval(() => {
+    try {
+      giveaways.tick();
+    } catch (err) {
+      console.error('giveaway draw failed:', err);
+    }
+  }, 5000);
+  giveawayTimer.unref?.();
   const communities = createCommunities({ db, economy, HttpError, bad, cleanText, requireAuth, writeLimiter, authorCard, placeView, canSee: (p, u) => store.canSee(p, u, isFriend) });
   // Community places: editable by members whose role has "places"; private ones visible to members.
   hub.canEditPlace = (user, row) => communities.canEditPlace(row, user);
@@ -1098,6 +1108,7 @@ export function createApi({ db, hub, renderDir, store, owner = process.env.MELTI
     badges.routes,
     animations.routes,
     communities.routes,
+    giveaways.routes,
     createStudioRoutes({ db, hub, store, communities, requireAuth, requireStaff, HttpError, bad, cleanText, writeLimiter, publicProfile, authorCard, isFriend, placeView, pickLang }),
   );
 

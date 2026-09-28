@@ -170,6 +170,7 @@ export class PlaceStore {
     this.cache = new Map(); // id -> { version, melt }
     this.q = {
       one: db.prepare('SELECT * FROM places WHERE id = ? AND deleted = 0'),
+      hasPlayer: db.prepare('SELECT 1 FROM place_players WHERE place_id = ? AND user_id = ?'),
       touchPlayer: db.prepare(`INSERT INTO place_players (place_id, user_id, visits, playtime_ms, first_at, last_at) VALUES (?, ?, 1, 0, ?, ?)
         ON CONFLICT(place_id, user_id) DO UPDATE SET visits = visits + 1, last_at = excluded.last_at`),
       addPlayerTime: db.prepare('UPDATE place_players SET playtime_ms = playtime_ms + ? WHERE place_id = ? AND user_id = ?'),
@@ -229,10 +230,13 @@ export class PlaceStore {
     return row.visibility === 'friends' && isFriend(row.owner_id, user.id);
   }
 
+  /** Someone joined; true the first time they ever play this place (that's a visit). */
   recordVisit(placeId, userId) {
     const now = Date.now();
+    const first = !this.q.hasPlayer.get(placeId, userId);
     this.q.touchPlayer.run(placeId, userId, now, now);
     this.q.daily.run(placeId, new Date(now).toISOString().slice(0, 10), 1, 0);
+    return first;
   }
 
   recordPlaytime(placeId, userId, ms) {

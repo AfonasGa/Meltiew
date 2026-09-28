@@ -18,6 +18,7 @@ static var _asked_birthday := false
 var _nav_buttons := {}
 var _nav_icons := {}
 var _content: MarginContainer
+var _pages: MarginContainer
 var _page: Control
 var _page_id := ""
 var _badges := {}
@@ -54,6 +55,13 @@ func _ready() -> void:
 		_content.add_theme_constant_override("margin_" + side, 28)
 	_content.add_theme_constant_override("margin_left", 32)
 	row.add_child(_content)
+	# The owner's giveaway (when there is one) above whichever page is open.
+	var col := UI.vbox(12)
+	_content.add_child(col)
+	col.add_child(GiveawayBanner.new())
+	_pages = MarginContainer.new()
+	_pages.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	col.add_child(_pages)
 
 	Session.user_changed.connect(_refresh_me)
 	_refresh_me()
@@ -354,7 +362,7 @@ func open_page(id: String) -> void:
 		_:
 			_page = HomePage.new()
 	_page.set_meta("menu", self)
-	_content.add_child(_page)
+	_pages.add_child(_page)
 	var page := _page
 	page.modulate.a = 0.0
 	# Slide in from where the container puts the page (its margins), once it's laid out.

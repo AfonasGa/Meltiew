@@ -109,10 +109,20 @@ export function openDb(file) {
     );
   `);
   migrate(db);
+  uniqueVisits(db);
   return db;
 }
 
 /** Additive migrations for databases created by older versions. */
+// A place's visits count people, not joins (rejoining, kicks and server moves made a
+// place with 250 players show 700). Once: recount from who has played each place.
+function uniqueVisits(db) {
+  if (db.prepare("SELECT 1 FROM config WHERE key = 'visits_unique'").get()) return;
+  db.exec(`UPDATE places SET visits = (SELECT COUNT(*) FROM place_players pp WHERE pp.place_id = places.id)
+    WHERE EXISTS (SELECT 1 FROM place_players pp WHERE pp.place_id = places.id)`);
+  db.prepare("INSERT INTO config (key, value) VALUES ('visits_unique', '1')").run();
+}
+
 function migrate(db) {
   const cols = new Set(db.prepare('PRAGMA table_info(users)').all().map((c) => c.name));
   if (!cols.has('render_hash')) db.exec("ALTER TABLE users ADD COLUMN render_hash TEXT NOT NULL DEFAULT ''");

@@ -795,8 +795,8 @@ export class GameHub {
       this.flushPlace(server);
     }
     // Every place (the playground too) keeps visit history: stats and "recently played".
-    this.places?.visit(game, conn.user.id);
-    this.onJoin(game);
+    // A visit is a new player, not every join.
+    if (!this.places || this.places.visit(game, conn.user.id) !== false) this.onJoin(game);
     this.economy?.progress(conn.user.id, 'places', 1, game);
     this.log(`${conn.user.username} joined ${server.id} (${server.players.size}/${server.maxPlayers || MAX_PLAYERS})`);
   }
