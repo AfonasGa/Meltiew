@@ -5,10 +5,8 @@ var _mode := "login"
 var _tab_login: Button
 var _tab_register: Button
 var _username: LineEdit
-var _display: LineEdit
 var _password: LineEdit
 var _password2: LineEdit
-var _display_row: Control
 var _password2_row: Control
 var _birthday: BirthdayInput
 var _birthday_row: Control
@@ -23,6 +21,10 @@ var _stage: AvatarStage
 var _left: Control
 var _card: PanelContainer
 var _pairs: Array[BoxContainer] = []
+## Signing up is two steps: account and email, then the birthday.
+var _step := 1
+var _fields: Array[Control] = []  # what step 1 shows
+var _back: Button
 
 
 func _ready() -> void:
@@ -107,10 +109,6 @@ func _ready() -> void:
 	_username = UI.input(L.t("username"))
 	_username.max_length = 20
 	pair1.add_child(_username)
-	_display = UI.input(L.t("display_name_hint"))
-	_display.max_length = 24
-	_display_row = _display
-	pair1.add_child(_display)
 	_password = UI.input(L.t("password"), true)
 	_password.max_length = 128
 	pair2.add_child(_password)
@@ -118,28 +116,28 @@ func _ready() -> void:
 	_password2.max_length = 128
 	_password2_row = _password2
 	pair2.add_child(_password2)
-	for e in [_username, _display, _password, _password2]:
+	for e in [_username, _password, _password2]:
 		e.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	# Signing up: a code sent to your email (Gmail, Outlook, iCloud and such).
-	var pair3 := BoxContainer.new()
-	pair3.add_theme_constant_override("separation", 14)
-	form.add_child(pair3)
-	_pairs.append(pair3)
-	_email_row = pair3
+	# Signing up: the email (Gmail, Outlook, iCloud and such) with a small "send code"
+	# next to it, and the code from the email under it.
+	var email_col := UI.vbox(10)
+	form.add_child(email_col)
+	_email_row = email_col
 	var email_box := UI.hbox(8)
-	email_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	pair3.add_child(email_box)
+	email_col.add_child(email_box)
 	_email = UI.input(L.t("email"))
 	_email.max_length = 120
 	_email.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	email_box.add_child(_email)
 	_send_code = UI.button(L.t("send_code"), "ghost", 44)
+	_send_code.size_flags_horizontal = Control.SIZE_SHRINK_END
 	_send_code.pressed.connect(_on_send_code)
 	email_box.add_child(_send_code)
 	_code = UI.input(L.t("email_code"))
 	_code.max_length = 6
-	_code.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	pair3.add_child(_code)
+	email_col.add_child(_code)
+	_fields = [pair1, pair2, email_col]
+	# Step 2: the birthday, on its own.
 	var bd := UI.vbox(6)
 	bd.add_child(UI.label(L.t("bd_label"), 15, UI.MUTED, "bold"))
 	_birthday = BirthdayInput.new()
@@ -154,6 +152,9 @@ func _ready() -> void:
 	_submit = UI.button(L.t("sign_in"))
 	_submit.custom_minimum_size.y = 60
 	form.add_child(_submit)
+	_back = UI.button(L.t("back"), "flat", 44)
+	_back.pressed.connect(func(): _set_step(1))
+	form.add_child(_back)
 	_hint = UI.label("", 16, UI.MUTED)
 	_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -176,7 +177,7 @@ func _ready() -> void:
 	fit.call()
 
 	_submit.pressed.connect(_on_submit)
-	for e in [_username, _display, _password, _password2]:
+	for e in [_username, _password, _password2, _email, _code]:
 		e.text_submitted.connect(func(_t): _next_field(e))
 	_set_mode("login")
 
@@ -195,17 +196,25 @@ func _set_mode(mode: String) -> void:
 	var reg := mode == "register"
 	_tab_login.button_pressed = not reg
 	_tab_register.button_pressed = reg
-	_display_row.visible = reg
 	_password2_row.visible = reg
-	_birthday_row.visible = reg
 	_email_row.visible = reg
-	_submit.text = L.t("create_account") if reg else L.t("sign_in")
-	_hint.text = L.t("register_hint") if reg else L.t("login_hint")
+	_set_step(1)
+
+
+func _set_step(step: int) -> void:
+	_step = step
+	var reg := _mode == "register"
+	for f in _fields:
+		f.visible = step == 1 and (reg or f != _email_row)
+	_birthday_row.visible = reg and step == 2
+	_back.visible = reg and step == 2
+	_hint.text = L.t("bd_why") if reg and step == 2 else (L.t("register_hint") if reg else L.t("login_hint"))
+	_submit.text = L.t("sign_in") if not reg else (L.t("continue") if step == 1 else L.t("create_account"))
 	_error.visible = false
 
 
 func _next_field(from: LineEdit) -> void:
-	var order: Array = [_username, _password] if _mode == "login" else [_username, _display, _password, _password2]
+	var order: Array = [_username, _password] if _mode == "login" else [_username, _password, _password2, _email, _code]
 	var i := order.find(from)
 	if i >= 0 and i < order.size() - 1:
 		order[i + 1].grab_focus()
@@ -240,24 +249,36 @@ func _on_submit() -> void:
 		if _password2.text != password:
 			_show_error(L.t("passwords_mismatch"))
 			return
-		var display := _display.text.strip_edges()
-		body.display_name = display if display.length() >= 2 else username
+		body.email = _email.text.strip_edges()
+		body.code = _code.text.strip_edges()
+		if not "@" in body.email:
+			_show_error(L.t("bad_email"))
+			return
+		if body.code.length() != 6:
+			_show_error(L.t("need_code"))
+			return
+		# Everything for the account is there: now the birthday, on its own step.
+		if _step == 1:
+			_set_step(2)
+			return
+		# The name shown to others starts as the username; it's changed in the avatar screen.
+		body.display_name = username
 		body.birthdate = _birthday.value()
 		if body.birthdate == "":
 			_show_error(L.t("bd_incomplete"))
 			return
-		body.email = _email.text.strip_edges()
-		body.code = _code.text.strip_edges()
 		path = "/api/register"
 	_submit.disabled = true
 	_submit.text = L.t("one_sec")
 	_error.visible = false
 	var r := await Api.request("POST", path, body)
 	_submit.disabled = false
-	_set_mode(_mode)
 	if not r.ok:
+		# Wrong code, taken name and such are on step 1; a bad birthday stays here.
+		_set_step(2 if r.error == "bad_birthdate" else 1)
 		_show_error(r.message)
 		return
+	_set_step(_step)
 	Session.set_auth(r.data.token, r.data.user)
 	Sfx.play("join")
 	UI.toast(L.t("welcome_name", [r.data.user.display_name]), "ok")

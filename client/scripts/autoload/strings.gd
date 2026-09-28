@@ -247,6 +247,8 @@ const TABLE := {
 	"email": ["Email (Gmail, Outlook, iCloud...)", "Почта (Gmail, Яндекс, Mail.ru...)"],
 	"email_code": ["Code from the email", "Код из письма"],
 	"send_code": ["Send code", "Прислать код"],
+	"need_code": ["Enter the 6-digit code from the email", "Введи 6-значный код из письма"],
+	"continue": ["Continue", "Продолжить"],
 	"code_sent": ["Code sent! No email? Check the Spam folder", "Код отправлен! Нет письма? Загляни в папку «Спам»"],
 	"bad_email": ["Enter your email", "Введи почту"],
 	"mic_device": ["Microphone", "Микрофон"],
