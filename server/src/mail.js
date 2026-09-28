@@ -72,7 +72,6 @@ const SITE = 'https://meltiew.narez.xyz';
 // Colours from the site (public/style.css). Tables and inline styles: that's what every
 // mail app (Gmail, Outlook, phones) draws the same way.
 function codeHtml(code, t) {
-  const digits = code.split('').join('&#8202;');
   return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="dark light"></head>
 <body style="margin:0;padding:0;background:#16141d">
 <div style="display:none;max-height:0;overflow:hidden">${t.lead} ${t.expires}</div>
@@ -86,7 +85,7 @@ function codeHtml(code, t) {
   <tr><td style="background:#242030;border-radius:20px;padding:32px 28px;font-family:'Segoe UI',Roboto,Helvetica,Arial,sans-serif">
     <div style="font-size:22px;font-weight:800;color:#f4f1ec">${t.title}</div>
     <div style="font-size:15px;line-height:1.5;color:#9d96b0;padding-top:6px">${t.lead}</div>
-    <div style="margin:24px 0;padding:18px 0;background:#16141d;border:2px solid #b89cff;border-radius:16px;text-align:center;font:800 40px/1 'SF Mono',Consolas,'Roboto Mono',monospace;letter-spacing:10px;color:#7ee0c3">${digits}</div>
+    <div style="margin:24px 0;padding:18px 8px;background:#2e2940;border:2px solid #b89cff;border-radius:16px;text-align:center;white-space:nowrap;font:800 34px/1 'Segoe UI',Roboto,Helvetica,Arial,sans-serif;letter-spacing:6px;color:#f4f1ec">${code}</div>
     <div style="font-size:14px;line-height:1.5;color:#f4f1ec">${t.expires}</div>
     <div style="font-size:13px;line-height:1.5;color:#9d96b0;padding-top:10px">${t.ignore}</div>
   </td></tr>
