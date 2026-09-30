@@ -1,0 +1,151 @@
+name: macosandiosnekit
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+env:
+  GODOT_VERSION: 4.7.2-stable
+  GODOT_TPL_DIR: 4.7.2.stable
+  # Для неподписанного .ipa подойдут любые значения; подставь свой bundle id, если он уже задан
+  IOS_BUNDLE_ID: com.meltiew.app
+  IOS_TEAM_ID: "0000000000"
+
+jobs:
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Godot
+        run: |
+          set -eux
+          BASE=https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}
+          curl -fsSL -o godot.zip "$BASE/Godot_v${GODOT_VERSION}_macos.universal.zip"
+          curl -fsSL -o templates.tpz "$BASE/Godot_v${GODOT_VERSION}_export_templates.tpz"
+          unzip -o -q godot.zip -d godot
+          unzip -o -q templates.tpz -d templates
+          mkdir -p "$HOME/Library/Application Support/Godot/export_templates/${GODOT_TPL_DIR}"
+          cp -r templates/templates/* "$HOME/Library/Application Support/Godot/export_templates/${GODOT_TPL_DIR}/"
+          chmod +x godot/Godot.app/Contents/MacOS/Godot
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build LuauVM (macos + ios)
+        run: |
+          set -eux
+          git clone --depth 1 https://github.com/narezy/Meltiew meltsrc
+          cd meltsrc/native
+          mkdir third_party
+          git clone --depth 1 --branch 0.739 https://github.com/luau-lang/luau third_party/luau
+          git clone --depth 1 --branch 4.5 https://github.com/godotengine/godot-cpp third_party/godot-cpp
+          python -m pip install scons
+          python3 - <<'PY'
+          s = open('SConstruct').read()
+          old = 'library = env.SharedLibrary(out + "libmeltiew_luau" + suffix + env["SHLIBSUFFIX"], source=sources)'
+          new = 'library = (env.StaticLibrary(out + "libmeltiew_luau.ios" + suffix + ".static.a", source=sources) if env["platform"] == "ios" else env.SharedLibrary(out + "libmeltiew_luau" + suffix + env["SHLIBSUFFIX"], source=sources))'
+          # без этой проверки подмена молча не сработает, если SConstruct изменится
+          assert old in s, "SConstruct изменился: строка library = ... не найдена"
+          open('SConstruct', 'w').write(s.replace(old, new))
+          PY
+          scons platform=macos arch=universal target=template_release disable_exceptions=no -j3
+          scons platform=ios arch=arm64 target=template_release disable_exceptions=no -j3
+          OUT="$(cd ../client/addons/meltiew_luau/bin && pwd)"
+          ls -la "$OUT"
+          DEST="$GITHUB_WORKSPACE/addons/meltiew_luau/bin"
+          FW="$DEST/libmeltiew_luau.ios.arm64.static.framework"
+          mkdir -p "$FW"
+          cp "$OUT/libmeltiew_luau.ios.ios.arm64.static.a" "$FW/libmeltiew_luau"
+          cp "$OUT/libmeltiew_luau.macos.universal.dylib" "$DEST/"
+      - name: Ensure macOS/iOS entries in .gdextension
+        run: |
+          # без строк macos/ios Godot не подхватит библиотеки, и Luau-VM в сборке будет отсутствовать
+          F=addons/meltiew_luau/meltiew_luau.gdextension
+          grep -q '^macos' "$F" || echo 'macos = "res://addons/meltiew_luau/bin/libmeltiew_luau.macos.universal.dylib"' >> "$F"
+          grep -q '^ios.arm64' "$F" || echo 'ios.arm64 = "res://addons/meltiew_luau/bin/libmeltiew_luau.ios.arm64.static.framework"' >> "$F"
+          cat "$F"
+      - name: Import and Export
+        run: |
+          ./godot/Godot.app/Contents/MacOS/Godot --headless --path . --import || true
+          ./godot/Godot.app/Contents/MacOS/Godot --headless --path . --import
+          mkdir -p export/macos
+          ./godot/Godot.app/Contents/MacOS/Godot --headless --path . --export-release "macOS" export/macos/Meltiew.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Meltiew-macos
+          path: export/macos/
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: luau-libs
+          path: addons/meltiew_luau/
+          if-no-files-found: error
+
+  ios:
+    runs-on: macos-latest
+    needs: macos
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: luau-libs
+          path: addons/meltiew_luau/
+      - name: Install Godot
+        run: |
+          set -eux
+          BASE=https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}
+          curl -fsSL -o godot.zip "$BASE/Godot_v${GODOT_VERSION}_macos.universal.zip"
+          curl -fsSL -o templates.tpz "$BASE/Godot_v${GODOT_VERSION}_export_templates.tpz"
+          unzip -o -q godot.zip -d godot
+          unzip -o -q templates.tpz -d templates
+          mkdir -p "$HOME/Library/Application Support/Godot/export_templates/${GODOT_TPL_DIR}"
+          cp -r templates/templates/* "$HOME/Library/Application Support/Godot/export_templates/${GODOT_TPL_DIR}/"
+          chmod +x godot/Godot.app/Contents/MacOS/Godot
+      - name: Patch iOS export preset (bundle id, team id, project only)
+        run: |
+          python3 - <<'PY'
+          import os, re
+          path = 'export_presets.cfg'
+          s = open(path, encoding='utf-8').read()
+          m = re.search(r'(?m)^\[preset\.(\d+)\]\s+name="iOS"', s)
+          assert m, 'В export_presets.cfg нет пресета "iOS"'
+          header = '[preset.%s.options]' % m.group(1)
+          start = s.index(header) + len(header)
+          nxt = re.search(r'(?m)^\[', s[start:])
+          end = start + nxt.start() if nxt else len(s)
+          body = s[start:end]
+          def put(body, key, value, raw=False):
+              line = '%s=%s' % (key, value if raw else '"%s"' % value)
+              pat = re.compile(r'(?m)^' + re.escape(key) + r'=.*$')
+              if pat.search(body):
+                  return pat.sub(lambda _: line, body)
+              return body.rstrip('\n') + '\n' + line + '\n\n'
+          body = put(body, 'application/bundle_identifier', os.environ['IOS_BUNDLE_ID'])
+          body = put(body, 'application/app_store_team_id', os.environ['IOS_TEAM_ID'])
+          # только сгенерировать Xcode-проект: сборку и подпись делает следующий шаг
+          body = put(body, 'application/export_project_only', 'true', raw=True)
+          open(path, 'w', encoding='utf-8').write(s[:start] + body + s[end:])
+          print(body)
+          PY
+      - name: Export Xcode project
+        run: |
+          ./godot/Godot.app/Contents/MacOS/Godot --headless --path . --import || true
+          ./godot/Godot.app/Contents/MacOS/Godot --headless --path . --import
+          mkdir -p export/ios
+          ./godot/Godot.app/Contents/MacOS/Godot --headless --path . --export-release "iOS" export/ios/Meltiew.xcodeproj
+      - name: Build unsigned ipa
+        run: |
+          set -eux
+          cd export/ios
+          PROJ=$(ls -d *.xcodeproj | head -1)
+          SCHEME=$(basename "$PROJ" .xcodeproj)
+          xcodebuild -project "$PROJ" -scheme "$SCHEME" -sdk iphoneos -configuration Release CODE_SIGN_STYLE=Manual CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO CODE_SIGN_IDENTITY="" DEVELOPMENT_TEAM="" PROVISIONING_PROFILE_SPECIFIER="" -derivedDataPath DerivedData build
+          APP=$(find DerivedData/Build/Products/Release-iphoneos -maxdepth 1 -name "*.app" | head -1)
+          mkdir -p Payload
+          cp -R "$APP" Payload/
+          zip -qry Meltiew-unsigned.ipa Payload
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Meltiew-ios
+          path: export/ios/Meltiew-unsigned.ipa
+          if-no-files-found: error
